@@ -1,0 +1,19 @@
+{
+  "name": "VidNest",
+  "version": "1.0.0",
+  "description": "Direct VidNest streams for movies and series. Returns MP4/MKV sources whenever VidNest exposes them.",
+  "scrapers": [
+    {
+      "id": "vidnest",
+      "name": "VidNest",
+      "description": "VidNest (vidnest.fun) — direct MP4/MKV when available, HLS for series. 1080p preferred, otherwise the highest available quality.",
+      "version": "1.0.0",
+      "supportedTypes": ["movie", "tv"],
+      "filename": "providers/vidnest.js",
+      "enabled": true,
+      "formats": ["mp4", "m3u8"],
+      "logo": "https://vidnest.fun/og-image.png",
+      "contentLanguage": ["en", "hi", "multi"]
+    }
+  ]
+}
