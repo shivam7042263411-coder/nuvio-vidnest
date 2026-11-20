@@ -167,3 +167,61 @@ test("tv: falls back to the highest tier when 1080p is absent", async (t) => {
   assert.ok(results.length >= 1);
   assert.ok(results.every((result) => result.quality === "720p"));
 });
+
+test("movie: drops non English/Hindi languages, keeps English", async (t) => {
+  t.after(() => { globalThis.fetch = realFetch; });
+
+  stubFetch(async (url) => {
+    const host = url.split("/")[3];
+    const language = host === "ophim" ? "English" : host === "rpmvid" ? "Bengali" : "Tamil";
+    return response(await encrypt({
+      streams: [{ url: `https://cdn.example/${host}.mkv`, type: "mp4", quality: "1080p", language }],
+    }));
+  });
+
+  const results = await getStreams("550", "movie");
+
+  assert.deepEqual(results.map((result) => result.language), ["English"]);
+  assert.match(results[0].url, /ophim\.mkv$/);
+});
+
+test("tv: keeps Original Audio as the native English/Hindi track", async (t) => {
+  t.after(() => { globalThis.fetch = realFetch; });
+
+  stubFetch(async (url) => {
+    const host = url.split("/")[3];
+    const stream = host === "vidzee"
+      ? { url: "https://cdn.example/orig.m3u8", type: "hls", quality: "1080p", language: "Original Audio" }
+      : { url: `https://cdn.example/${host}.m3u8`, type: "hls", quality: "720p", language: "English" };
+    return response(await encrypt({ streams: [stream] }));
+  });
+
+  const results = await getStreams("1396", "tv", 1, 2);
+
+  assert.equal(results.length, 1);
+  assert.equal(results[0].quality, "1080p");
+  assert.equal(results[0].language, "Original");
+});
+
+test("tv: a 1080p other-language source loses to an English 720p one", async (t) => {
+  t.after(() => { globalThis.fetch = realFetch; });
+
+  stubFetch(async (url) => {
+    const host = url.split("/")[3];
+    const english = host === "ophim";
+    return response(await encrypt({
+      streams: [{
+        url: `https://cdn.example/${host}.m3u8`,
+        type: "hls",
+        quality: english ? "720p" : "1080p",
+        language: english ? "English" : "Tamil",
+      }],
+    }));
+  });
+
+  const results = await getStreams("1396", "tv", 1, 2);
+
+  assert.equal(results.length, 1);
+  assert.equal(results[0].quality, "720p");
+  assert.equal(results[0].language, "English");
+});

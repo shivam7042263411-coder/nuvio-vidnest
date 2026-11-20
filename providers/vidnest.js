@@ -11,6 +11,11 @@
  *
  * Quality policy: only the 1080p sources are returned; if no source is 1080p,
  * only the highest quality tier that is available is returned.
+ *
+ * Language policy: only English and Hindi audio is returned. The native track
+ * ("Original Audio") and unlabeled streams are kept too, because those are the
+ * default/VidNest-original audio; streams labeled with any other language are
+ * dropped.
  */
 
 var VIDNEST_BASE = "https://new.vidnest.fun";
@@ -197,10 +202,25 @@ function qualityOf(stream) {
   return quality;
 }
 
+function languageTag(stream) {
+  var language = String(stream.language || "").trim().toLowerCase();
+  if (!language || language === "auto") return "original";
+  if (language.indexOf("hindi") >= 0 || language === "hi" || language === "hin") return "hindi";
+  if (language.indexOf("english") >= 0 || language === "en" || language === "eng") return "english";
+  if (language.indexOf("original") >= 0) return "original";
+  return "other";
+}
+
+function isAllowedLanguage(stream) {
+  return languageTag(stream) !== "other";
+}
+
 function languageOf(stream) {
-  var language = String(stream.language || "").trim();
-  if (!language || language.toLowerCase() === "auto") return "Original";
-  return language;
+  var tag = languageTag(stream);
+  if (tag === "hindi") return "Hindi";
+  if (tag === "english") return "English";
+  if (tag === "original") return "Original";
+  return String(stream.language || "").trim();
 }
 
 function qualityRank(quality) {
@@ -276,9 +296,10 @@ function selectTopQuality(streams) {
 }
 
 function finalize(streams) {
-  var mp4 = streams.filter(function (stream) { return stream.type === "mp4"; });
-  var chosen = mp4.length > 0 ? mp4 : streams.filter(function (stream) { return stream.type === "hls"; });
-  return selectTopQuality(dedupe(chosen)).sort(function (a, b) {
+  var allowed = streams.filter(isAllowedLanguage);
+  var mp4 = allowed.filter(function (stream) { return stream.type === "mp4"; });
+  var pool = mp4.length > 0 ? mp4 : allowed.filter(function (stream) { return stream.type === "hls"; });
+  return selectTopQuality(dedupe(pool)).sort(function (a, b) {
     return qualityRank(b.quality) - qualityRank(a.quality);
   });
 }
@@ -309,8 +330,10 @@ async function getStreams(tmdbId, mediaType, season, episode) {
         collected = collected.concat(results);
       });
 
-      var mp4 = collected.filter(function (stream) { return stream.type === "mp4"; });
-      if (mp4.length > 0) return finalize(mp4);
+      var hasMp4 = collected.some(function (stream) {
+        return stream.type === "mp4" && isAllowedLanguage(stream);
+      });
+      if (hasMp4) return finalize(collected);
       if (Date.now() > deadline) break;
       if (i + BATCH_SIZE < PROVIDERS.length) await sleep(BATCH_GAP_MS);
     }
