@@ -5,9 +5,8 @@
  * (the same helper the 7movies front end uses), then the API returns direct
  * progressive MP4 qualities plus subtitle tracks.
  *
- * Source policy: MP4 only, no HLS. 1080p is returned when VidLink has it,
- * otherwise the highest quality it offers, so a title never comes back empty
- * just because it tops out at 720p.
+ * Source policy: MP4 only, no HLS, and 1080p or 4K only. A title whose best
+ * quality is below 1080p returns nothing.
  *
  * Headers matter: VidLink's media CDN (bcdn.hakunaymatata.com) answers 428
  * Forbidden to a browser User-Agent and 206 to "okhttp/4.12.0", so every
@@ -129,7 +128,7 @@ function playbackHeaders(source) {
   return headers;
 }
 
-// One entry per declared quality. 1080p wins; without it the highest wins.
+// One entry per declared quality, keeping only 1080p and 4K.
 function selectStreams(stream, subtitles) {
   var qualities = stream && stream.qualities ? stream.qualities : null;
   if (!qualities) return [];
@@ -149,14 +148,10 @@ function selectStreams(stream, subtitles) {
   });
   if (!entries.length) return [];
 
-  var top = entries.reduce(function (best, entry) {
-    return entry.height > best.height ? entry : best;
+  // 1080p and 4K only. A title whose best is below 1080p returns nothing.
+  var chosen = entries.filter(function (entry) {
+    return entry.height >= PREFERRED_QUALITY;
   });
-  var chosen = top.height >= PREFERRED_QUALITY
-    ? entries.filter(function (entry) {
-        return entry.height >= PREFERRED_QUALITY;
-      })
-    : [top];
 
   return chosen.map(function (entry) {
     return {

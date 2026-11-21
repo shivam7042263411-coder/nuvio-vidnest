@@ -212,7 +212,7 @@ function formatSize(bytes) {
   return (value / 1024 / 1024 / 1024).toFixed(2) + " GB";
 }
 
-// MP4 only, 1080p when available, otherwise the highest resolution on offer.
+// MP4 only, 1080p and 4K only. A title whose best is below 1080p returns nothing.
 function selectStreams(item, streams) {
   var language = languageOf(item);
   if (!language) return [];
@@ -233,14 +233,9 @@ function selectStreams(item, streams) {
     });
   if (!candidates.length) return [];
 
-  var top = candidates.reduce(function (best, entry) {
-    return entry.height > best.height ? entry : best;
+  var chosen = candidates.filter(function (entry) {
+    return entry.height >= Number(PREFERRED_QUALITY);
   });
-  var chosen = top.height >= Number(PREFERRED_QUALITY)
-    ? candidates.filter(function (entry) {
-        return entry.height >= Number(PREFERRED_QUALITY);
-      })
-    : [top];
 
   var seen = {};
   var out = [];

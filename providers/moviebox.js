@@ -7201,6 +7201,10 @@ var CryptoJS = (function () { var module = { exports: {} }; var exports = module
 
       return probeNextCandidate();
     }).then(function (streams) {
+      // Local change: 1080p and 4K only. Upstream returns 360p–4K.
+      streams = streams.filter(function (s) {
+        return s.quality === "4K" || s.quality === "1080p";
+      });
       streams.sort(function (a, b) {
         var qMap = { "4K": 5, "1080p": 4, "720p": 3, "480p": 2, "360p": 1 };
         var qDiff = (qMap[b.quality] || 0) - (qMap[a.quality] || 0);

@@ -157,7 +157,7 @@ test("drops dubs outside the English/Hindi policy", async () => {
   }
 });
 
-test("falls back to the highest quality when there is no 1080p", async () => {
+test("returns nothing when there is no 1080p or 4K", async () => {
   const mock = mockFetch([
     meta,
     pkgs,
@@ -174,8 +174,7 @@ test("falls back to the highest quality when there is no 1080p", async () => {
   ]);
 
   try {
-    const [stream] = await getStreams(550, "movie");
-    assert.equal(stream.quality, "720p");
+    assert.deepEqual(await getStreams(550, "movie"), []);
   } finally {
     mock.restore();
   }

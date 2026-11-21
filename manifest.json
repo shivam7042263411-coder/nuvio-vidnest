@@ -1,13 +1,13 @@
 {
   "name": "Direct MP4",
-  "version": "3.4.0",
-  "description": "Direct MP4 streams from VidLink and MovieBox (1080p/4K when available). No HLS.",
+  "version": "3.5.0",
+  "description": "Direct MP4 streams from VidLink and MovieBox. 1080p and 4K only. No HLS.",
   "scrapers": [
     {
       "id": "vidlink",
       "name": "VidLink",
-      "description": "VidLink (vidlink.pro) — direct MP4 with the original audio track and bundled subtitles.",
-      "version": "3.4.0",
+      "description": "VidLink (vidlink.pro) — direct MP4 1080p/4K with the original audio track and bundled subtitles.",
+      "version": "3.5.0",
       "supportedTypes": ["movie", "tv"],
       "filename": "providers/vidlink.js",
       "enabled": true,
@@ -18,8 +18,8 @@
     {
       "id": "moviebox",
       "name": "MovieBox",
-      "description": "MovieBox — direct MP4 movies with separate English and Hindi releases (4K/1080p when available).",
-      "version": "3.4.0",
+      "description": "MovieBox — direct MP4 movies in 1080p/4K with separate English and Hindi releases.",
+      "version": "3.5.0",
       "supportedTypes": ["movie"],
       "filename": "providers/moviebox.js",
       "enabled": true,
@@ -29,8 +29,8 @@
     {
       "id": "moviebox-series",
       "name": "MovieBox Series",
-      "description": "MovieBox series — direct MP4 episodes with separate English and Hindi releases (1080p when available).",
-      "version": "3.4.0",
+      "description": "MovieBox series — direct MP4 episodes in 1080p/4K with separate English and Hindi releases.",
+      "version": "3.5.0",
       "supportedTypes": ["tv"],
       "filename": "providers/moviebox-tv.js",
       "enabled": true,

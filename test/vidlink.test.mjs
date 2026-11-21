@@ -117,7 +117,7 @@ test("sends no referer when VidLink supplies none", async () => {
   }
 });
 
-test("falls back to the highest quality when there is no 1080p", async () => {
+test("returns nothing when there is no 1080p or 4K", async () => {
   const mock = mockFetch([
     enc,
     {
@@ -128,9 +128,32 @@ test("falls back to the highest quality when there is no 1080p", async () => {
   ]);
 
   try {
+    assert.deepEqual(await getStreams(550, "movie"), []);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("keeps 4K and 1080p while dropping lower qualities", async () => {
+  const mock = mockFetch([
+    enc,
+    {
+      match: "/movie/HASH123",
+      response: () =>
+        json(
+          payload({
+            720: quality("https://cdn/720.mp4"),
+            1080: quality("https://cdn/1080.mp4"),
+            2160: quality("https://cdn/4k.mp4")
+          })
+        )
+    }
+  ]);
+
+  try {
     const streams = await getStreams(550, "movie");
-    assert.deepEqual(streams.map((s) => s.quality), ["720p"]);
-    assert.equal(streams[0].url, "https://cdn/720.mp4");
+    assert.deepEqual(streams.map((s) => s.quality).sort(), ["1080p", "4K"]);
+    assert.deepEqual(streams.map((s) => s.url).sort(), ["https://cdn/1080.mp4", "https://cdn/4k.mp4"]);
   } finally {
     mock.restore();
   }
