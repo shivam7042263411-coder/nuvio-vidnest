@@ -21,10 +21,10 @@
 var VIDNEST_BASE = "https://new.vidnest.fun";
 var VIDNEST_SECRET = "K3p8vQ2mX9rL5wZ0fN7bG1sH4tJ6dC9_y8S3wM1nQ5pL2";
 
-var REQUEST_TIMEOUT_MS = 5000;
-var TOTAL_BUDGET_MS = 38000;
-var BATCH_SIZE = 3;
-var BATCH_GAP_MS = 300;
+var REQUEST_TIMEOUT_MS = 3000;
+var TOTAL_BUDGET_MS = 15000;
+var BATCH_SIZE = 6;
+var BATCH_GAP_MS = 100;
 
 // Returned quality: 1080p when VidNest has it, otherwise the best it offers.
 var PREFERRED_QUALITY = 1080;
@@ -527,6 +527,51 @@ function isPositiveInt(value) {
   return isFinite(number) && number >= 0 && Math.floor(number) === number;
 }
 
+// True once the collected set holds the source we would keep anyway: a movie MP4
+// ("auto" means top tier) or a 1080p tier, the cap of VidNest's HLS-only TV path.
+function hasTarget(streams, kind) {
+  for (var i = 0; i < streams.length; i++) {
+    var stream = streams[i];
+    if (!isAllowedLanguage(stream)) continue;
+    var rank = qualityRank(stream.quality);
+    if (kind === "movie") {
+      if (stream.type === "mp4" && (rank === 0 || rank >= PREFERRED_QUALITY)) return true;
+    } else if (rank >= PREFERRED_QUALITY) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Resolves as soon as one provider yields a target, so the slow or erroring
+// providers sharing its batch are abandoned instead of waited on.
+function raceBatch(batch, tmdbId, kind, season, episode) {
+  return new Promise(function (resolve) {
+    var collected = [];
+    var settled = 0;
+    var finished = false;
+
+    function finish() {
+      if (finished) return;
+      finished = true;
+      resolve(collected);
+    }
+
+    batch.forEach(function (provider) {
+      fetchProvider(provider, tmdbId, kind, season, episode)
+        .then(function (results) {
+          collected = collected.concat(results);
+          if (hasTarget(collected, kind)) finish();
+        })
+        .catch(function () {})
+        .then(function () {
+          settled += 1;
+          if (settled === batch.length) finish();
+        });
+    });
+  });
+}
+
 async function getStreams(tmdbId, mediaType, season, episode) {
   try {
     var id = String(tmdbId == null ? "" : tmdbId).trim();
@@ -540,17 +585,8 @@ async function getStreams(tmdbId, mediaType, season, episode) {
 
     for (var i = 0; i < PROVIDERS.length; i += BATCH_SIZE) {
       var batch = PROVIDERS.slice(i, i + BATCH_SIZE);
-      var batchResults = await Promise.all(batch.map(function (provider) {
-        return fetchProvider(provider, id, kind, season, episode).catch(function () { return []; });
-      }));
-      batchResults.forEach(function (results) {
-        collected = collected.concat(results);
-      });
-
-      var hasMp4 = collected.some(function (stream) {
-        return stream.type === "mp4" && isAllowedLanguage(stream);
-      });
-      if (hasMp4) return finalize(collected);
+      collected = collected.concat(await raceBatch(batch, id, kind, season, episode));
+      if (hasTarget(collected, kind)) break;
       if (Date.now() > deadline) break;
       if (i + BATCH_SIZE < PROVIDERS.length) await sleep(BATCH_GAP_MS);
     }

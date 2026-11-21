@@ -67,7 +67,7 @@ test("movie: builds the VidNest movie URL, decrypts, and returns MP4 only", asyn
 
   const results = await getStreams("550", "movie");
 
-  assert.equal(calls.length, 3, "must stop after the MP4 batch");
+  assert.ok(calls.length <= 6, "must stop within the first batch");
   assert.ok(calls.every((call) => /\/movie\/550\?_n=[A-Za-z0-9_-]{22}$/.test(call.url)));
   assert.equal(results.length, 1);
   assert.equal(results[0].type, "mp4");
@@ -84,15 +84,15 @@ test("tv: builds season/episode URLs and falls back to HLS when no MP4 exists", 
   const calls = stubFetch(async (url) => {
     const provider = url.split("/")[3];
     if (provider === "vidzee") return response({ error: "upstream" }, 502);
-    const hls = { streams: [{ url: `https://cdn.example/${provider}.m3u8`, type: "hls", quality: "1080p" }] };
+    const hls = { streams: [{ url: `https://cdn.example/${provider}.m3u8`, type: "hls", quality: "720p" }] };
     return response(provider === "ophim" ? hls : await encrypt(hls));
   });
 
   const results = await getStreams("1396", "tv", 1, 2);
 
-  assert.ok(calls.length > 3, "should query the whole provider list");
+  assert.ok(calls.length >= 12, "should query the whole provider list when no 1080p exists");
   assert.ok(calls.every((call) => /\/tv\/1396\/1\/2\?_n=[A-Za-z0-9_-]{22}$/.test(call.url)));
-  assert.ok(results.length >= 10);
+  assert.equal(results.length, 11, "the failing provider contributes nothing");
   assert.ok(results.every((result) => result.type === "hls"));
   assert.ok(results.some((result) => /Catflix/.test(result.name)));
   assert.ok(results.some((result) => /Sigma/.test(result.name)));
@@ -139,7 +139,7 @@ test("movie: keeps only the 1080p tier when a server offers it", async (t) => {
 test("tv: keeps only the 1080p tier when a 1080p server exists", async (t) => {
   t.after(() => { globalThis.fetch = realFetch; });
 
-  stubFetch(async (url) => {
+  const calls = stubFetch(async (url) => {
     const quality = url.split("/")[3] === "vidzee" ? "1080p" : "720p";
     return response(await encrypt({
       streams: [{ url: `https://cdn.example/${url.split("/")[3]}.m3u8`, type: "hls", quality }],
@@ -148,6 +148,7 @@ test("tv: keeps only the 1080p tier when a 1080p server exists", async (t) => {
 
   const results = await getStreams("1396", "tv", 1, 2);
 
+  assert.ok(calls.length <= 6, "stops within the batch that holds the 1080p source");
   assert.ok(results.length >= 1);
   assert.ok(results.every((result) => result.quality === "1080p"));
 });
