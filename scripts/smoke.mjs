@@ -1,11 +1,11 @@
 /**
- * Live smoke check against vidnest.fun.
+ * Live smoke check against vidly.pro.
  * Usage: node scripts/smoke.mjs [tmdbId] [movie|tv] [season] [episode]
  */
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { getStreams } = require("../providers/vidnest.js");
+const { getStreams } = require("../providers/vidly.js");
 
 const [tmdbId = "550", mediaType = "movie", season, episode] = process.argv.slice(2);
 
@@ -17,7 +17,7 @@ if (typeof fetch !== "function") {
 const results = await getStreams(tmdbId, mediaType, season, episode);
 
 if (results.length === 0) {
-  console.error(`No sources returned for ${mediaType} ${tmdbId}. VidNest may be rate-limiting; retry in a minute.`);
+  console.error(`No 1080p sources returned for ${mediaType} ${tmdbId}. Vidly may be rate-limiting; retry in a minute.`);
   process.exit(2);
 }
 
@@ -25,5 +25,4 @@ console.log(`${results.length} source(s) for ${mediaType} ${tmdbId}${mediaType =
 for (const result of results) {
   console.log(`- [${result.type}] ${result.quality} ${result.language} | ${result.name}`);
   console.log(`  ${result.url}`);
-  if (Object.keys(result.headers).length > 0) console.log(`  headers: ${Object.keys(result.headers).join(", ")}`);
 }

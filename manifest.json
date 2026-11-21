@@ -1,18 +1,18 @@
 {
-  "name": "VidNest",
-  "version": "1.2.1",
-  "description": "Direct VidNest streams for movies and series. Returns MP4/MKV sources whenever VidNest exposes them, in English or Hindi only.",
+  "name": "Vidly",
+  "version": "2.0.0",
+  "description": "Direct Vidly streams for movies and series (vidly.pro). 1080p only, English/Hindi audio, Prism server preferred.",
   "scrapers": [
     {
-      "id": "vidnest",
-      "name": "VidNest",
-      "description": "VidNest (vidnest.fun) — direct MP4/MKV when available, HLS for series. 1080p preferred, otherwise the highest available quality.",
-      "version": "1.2.1",
+      "id": "vidly",
+      "name": "Vidly",
+      "description": "Vidly (vidly.pro) — 1080p HLS from the Prism server when available, English or Hindi audio.",
+      "version": "2.0.0",
       "supportedTypes": ["movie", "tv"],
-      "filename": "providers/vidnest.js",
+      "filename": "providers/vidly.js",
       "enabled": true,
-      "formats": ["mp4", "m3u8"],
-      "logo": "https://vidnest.fun/og-image.png",
+      "formats": ["m3u8"],
+      "logo": "https://vidly.pro/logo.png",
       "contentLanguage": ["en", "hi"]
     }
   ]
