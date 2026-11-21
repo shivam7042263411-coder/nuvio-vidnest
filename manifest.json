@@ -1,18 +1,18 @@
 {
-  "name": "Vidly",
-  "version": "2.0.1",
-  "description": "Direct Vidly streams for movies and series (vidly.pro). 1080p only, English/Hindi audio, Prism server preferred.",
+  "name": "VidLink",
+  "version": "3.0.0",
+  "description": "Direct MP4 streams from VidLink (vidlink.pro) for movies and series. 1080p when available, English/Hindi subtitles, no HLS.",
   "scrapers": [
     {
-      "id": "vidly",
-      "name": "Vidly",
-      "description": "Vidly (vidly.pro) — 1080p HLS from the Prism server when available, English or Hindi audio.",
-      "version": "2.0.1",
+      "id": "vidlink",
+      "name": "VidLink",
+      "description": "VidLink (vidlink.pro) — direct MP4, 1080p when available, bundled subtitles.",
+      "version": "3.0.0",
       "supportedTypes": ["movie", "tv"],
-      "filename": "providers/vidly.js",
+      "filename": "providers/vidlink.js",
       "enabled": true,
-      "formats": ["m3u8"],
-      "logo": "https://vidly.pro/logo.png",
+      "formats": ["mp4"],
+      "logo": "https://vidlink.pro/favicon.ico",
       "contentLanguage": ["en", "hi"]
     }
   ]
