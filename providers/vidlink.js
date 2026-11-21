@@ -31,6 +31,9 @@ var API_HEADERS = {
   "Origin": "https://vidlink.pro"
 };
 
+// The CDN answers 428 to a browser User-Agent, so the player must send this
+// one. MovieBox's host additionally demands a referer; VidLink supplies its
+// own per quality, so only the UA is unconditional here.
 var STREAM_HEADERS = { "User-Agent": MEDIA_UA };
 
 var SUBTITLE_LANGUAGES = {
@@ -110,6 +113,22 @@ function subtitlesOf(stream) {
   return out;
 }
 
+// VidLink ships a per-quality referer for the CDN (filmboom.top); keep the
+// native media UA and forward whatever else the API asks for.
+function playbackHeaders(source) {
+  var headers = Object.assign({}, STREAM_HEADERS);
+  var extra = (source && source.headers) || {};
+  Object.keys(extra).forEach(function (key) {
+    var value = extra[key];
+    if (!value) return;
+    if (/^referer$/i.test(key)) headers.Referer = value;
+    else if (/^origin$/i.test(key)) headers.Origin = value;
+    else if (/^user-agent$/i.test(key)) headers["User-Agent"] = MEDIA_UA;
+    else headers[key] = value;
+  });
+  return headers;
+}
+
 // One entry per declared quality. 1080p wins; without it the highest wins.
 function selectStreams(stream, subtitles) {
   var qualities = stream && stream.qualities ? stream.qualities : null;
@@ -124,7 +143,8 @@ function selectStreams(stream, subtitles) {
       height: isNaN(height) ? 0 : height,
       label: isNaN(height) ? "Auto" : qualityLabel(height),
       url: String(entry.url),
-      size: formatSize(entry.size)
+      size: formatSize(entry.size),
+      headers: playbackHeaders(entry)
     });
   });
   if (!entries.length) return [];
@@ -148,7 +168,7 @@ function selectStreams(stream, subtitles) {
       language: "Original",
       type: "mp4",
       provider: "VidLink",
-      headers: STREAM_HEADERS,
+      headers: entry.headers,
       subtitles: subtitles
     };
   });

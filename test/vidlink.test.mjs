@@ -76,6 +76,47 @@ test("returns the 1080p MP4 with player headers and subtitles", async () => {
   }
 });
 
+test("forwards the referer VidLink supplies for the CDN", async () => {
+  const mock = mockFetch([
+    enc,
+    {
+      match: "/movie/HASH123",
+      response: () =>
+        json(
+          payload({
+            1080: {
+              ...quality("https://cdn/1080.mp4"),
+              headers: { referer: "https://player.example/", origin: "https://player.example" }
+            }
+          })
+        )
+    }
+  ]);
+
+  try {
+    const [stream] = await getStreams(550, "movie");
+    assert.equal(stream.headers.Referer, "https://player.example/");
+    assert.equal(stream.headers.Origin, "https://player.example");
+    assert.equal(stream.headers["User-Agent"], "okhttp/4.12.0");
+  } finally {
+    mock.restore();
+  }
+});
+
+test("sends no referer when VidLink supplies none", async () => {
+  const mock = mockFetch([
+    enc,
+    { match: "/movie/HASH123", response: () => json(payload({ 1080: quality("https://cdn/1080.mp4") })) }
+  ]);
+
+  try {
+    const [stream] = await getStreams(550, "movie");
+    assert.deepEqual(stream.headers, { "User-Agent": "okhttp/4.12.0" });
+  } finally {
+    mock.restore();
+  }
+});
+
 test("falls back to the highest quality when there is no 1080p", async () => {
   const mock = mockFetch([
     enc,
