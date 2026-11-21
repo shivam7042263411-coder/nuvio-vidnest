@@ -8,6 +8,7 @@ const { getStreams } = require("../providers/vidnest.js");
 
 const SECRET = "K3p8vQ2mX9rL5wZ0fN7bG1sH4tJ6dC9_y8S3wM1nQ5pL2";
 const realFetch = globalThis.fetch;
+const realCrypto = globalThis.crypto;
 
 async function encrypt(payload) {
   const nonceBytes = webcrypto.getRandomValues(new Uint8Array(16));
@@ -224,4 +225,22 @@ test("tv: a 1080p other-language source loses to an English 720p one", async (t)
   assert.equal(results.length, 1);
   assert.equal(results[0].quality, "720p");
   assert.equal(results[0].language, "English");
+});
+
+test("decrypts without any global crypto (the path that crashed iOS)", async (t) => {
+  t.after(() => {
+    globalThis.fetch = realFetch;
+    Object.defineProperty(globalThis, "crypto", { value: realCrypto, configurable: true, writable: true });
+  });
+  Object.defineProperty(globalThis, "crypto", { value: undefined, configurable: true, writable: true });
+
+  stubFetch(async () => response(await encrypt({
+    streams: [{ url: "https://cdn.example/1080.mkv", type: "mp4", quality: "1080p", language: "English" }],
+  })));
+
+  const results = await getStreams("550", "movie");
+
+  assert.equal(results.length, 1);
+  assert.equal(results[0].type, "mp4");
+  assert.equal(results[0].quality, "1080p");
 });

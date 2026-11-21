@@ -9,8 +9,8 @@ const { getStreams } = require("../providers/vidnest.js");
 
 const [tmdbId = "550", mediaType = "movie", season, episode] = process.argv.slice(2);
 
-if (typeof fetch !== "function" || !globalThis.crypto?.subtle) {
-  console.error("Node 18+ with global fetch and WebCrypto is required.");
+if (typeof fetch !== "function") {
+  console.error("Node 18+ with global fetch is required.");
   process.exit(1);
 }
 
