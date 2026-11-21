@@ -1,11 +1,11 @@
 /**
  * Live smoke check against VidLink or MovieBox.
- * Usage: PROVIDER=moviebox|moviebox-tv node scripts/smoke.mjs [tmdbId] [movie|tv] [season] [episode]
+ * Usage: PROVIDER=moviebox node scripts/smoke.mjs [tmdbId] [movie|tv] [season] [episode]
  */
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const provider = ["moviebox", "moviebox-tv"].includes(process.env.PROVIDER) ? process.env.PROVIDER : "vidlink";
+const provider = process.env.PROVIDER === "moviebox" ? "moviebox" : "vidlink";
 const { getStreams } = require(`../providers/${provider}.js`);
 
 const [tmdbId = "603", mediaType = "movie", season, episode] = process.argv.slice(2);
