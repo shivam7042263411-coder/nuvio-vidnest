@@ -1,13 +1,13 @@
 {
   "name": "Vidly",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Direct Vidly streams for movies and series (vidly.pro). 1080p only, English/Hindi audio, Prism server preferred.",
   "scrapers": [
     {
       "id": "vidly",
       "name": "Vidly",
       "description": "Vidly (vidly.pro) — 1080p HLS from the Prism server when available, English or Hindi audio.",
-      "version": "2.0.0",
+      "version": "2.0.1",
       "supportedTypes": ["movie", "tv"],
       "filename": "providers/vidly.js",
       "enabled": true,

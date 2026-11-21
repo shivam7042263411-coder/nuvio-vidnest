@@ -94,6 +94,7 @@ test("keeps only 1080p English and Hindi streams from Prism", async () => {
   assert.deepEqual(streams.map((s) => s.language), ["English", "Hindi", "Original"]);
   assert.deepEqual(streams.map((s) => s.name), ["Vidly • Prism", "Vidly • Prism", "Vidly • Edge"]);
   assert.ok(streams.every((s) => s.quality === "1080p"));
+  assert.ok(streams.every((s) => s.headers && s.headers.Referer === "https://vidly.pro/"));
   assert.deepEqual(streams.map((s) => s.url), ["https://cdn/en1080.m3u8", "https://cdn/hi1080.m3u8", "https://cdn/edge1080.m3u8"]);
 });
 

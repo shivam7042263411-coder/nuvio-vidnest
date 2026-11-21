@@ -30,6 +30,13 @@ var PAGE_HEADERS = {
   "RSC": "1"
 };
 
+// Vidly's RSC endpoint intermittently 502s under load; the plain page carries
+// the same token and sealed fields, so it is the fallback.
+var PLAIN_PAGE_HEADERS = {
+  "User-Agent": PAGE_HEADERS["User-Agent"],
+  "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+};
+
 var API_HEADERS = {
   "User-Agent": PAGE_HEADERS["User-Agent"],
   "Accept": "*/*",
@@ -37,16 +44,17 @@ var API_HEADERS = {
   "Referer": VIDLY_BASE + "/"
 };
 
+// The stream CDNs (img.rousav.tech, dash-hls-bridge.*) reject requests that do
+// not carry the vidly page as referer with 403, so the player must send these.
+var STREAM_HEADERS = {
+  "User-Agent": PAGE_HEADERS["User-Agent"],
+  "Referer": VIDLY_BASE + "/"
+};
+
 function log() {
   try {
     console.log.apply(console, ["[Vidly]"].concat(Array.prototype.slice.call(arguments)));
   } catch (e) {}
-}
-
-function sleep(ms) {
-  return new Promise(function (resolve) {
-    setTimeout(resolve, ms);
-  });
 }
 
 function withTimeout(promise, ms) {
@@ -177,24 +185,19 @@ async function requestText(url, headers, ms) {
 
 async function fetchPage(tmdbId, kind, season, episode, deadline) {
   var path = pathFor(tmdbId, kind, season, episode);
+  var variants = [PAGE_HEADERS, PLAIN_PAGE_HEADERS];
 
-  for (var attempt = 0; attempt < 2; attempt++) {
+  for (var i = 0; i < variants.length; i++) {
     var remaining = deadline - Date.now();
     if (remaining < 500) return null;
 
     var url = VIDLY_BASE + path + "?_rsc=" + randomToken();
-    var text = await requestText(url, PAGE_HEADERS, Math.min(PAGE_TIMEOUT_MS, remaining));
-    if (!text && attempt === 0) {
-      await sleep(250);
-      continue;
-    }
-    if (!text) return null;
+    var text = await requestText(url, variants[i], Math.min(PAGE_TIMEOUT_MS, remaining));
+    if (!text) continue;
 
     var token = pickField(text, "token");
     var sealed = pickField(text, "sealed");
     if (token || sealed) return { token: token, sealed: sealed };
-
-    if (attempt === 0) await sleep(250);
   }
   return null;
 }
@@ -257,7 +260,7 @@ function normalize(serverLabel, stream) {
     language: language,
     type: "hls",
     provider: "Vidly",
-    headers: {}
+    headers: STREAM_HEADERS
   };
 }
 
