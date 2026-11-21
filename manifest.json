@@ -1,30 +1,19 @@
 {
   "name": "Direct MP4",
-  "version": "3.2.0",
-  "description": "Direct MP4 streams (1080p/4K when available) with English and Hindi audio. No HLS.",
+  "version": "3.3.0",
+  "description": "Direct MP4 streams from VidLink (1080p/4K when available). No HLS.",
   "scrapers": [
     {
       "id": "vidlink",
       "name": "VidLink",
       "description": "VidLink (vidlink.pro) — direct MP4 with the original audio track and bundled subtitles.",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "supportedTypes": ["movie", "tv"],
       "filename": "providers/vidlink.js",
       "enabled": true,
       "formats": ["mp4"],
       "logo": "https://vidlink.pro/favicon.ico",
       "contentLanguage": ["en"]
-    },
-    {
-      "id": "moviebox",
-      "name": "MovieBox",
-      "description": "MovieBox — direct MP4 with separate English and Hindi releases (1080p/4K when available).",
-      "version": "3.2.0",
-      "supportedTypes": ["movie", "tv"],
-      "filename": "providers/moviebox.js",
-      "enabled": true,
-      "formats": ["mp4"],
-      "contentLanguage": ["hi", "en"]
     }
   ]
 }
