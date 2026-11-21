@@ -86,6 +86,44 @@ test("returns the 1080p MP4 from the Hindi dub with player headers", async () =>
   }
 });
 
+test("returns English and Hindi as separate MP4 sources", async () => {
+  const mock = mockFetch([
+    meta,
+    pkgs,
+    {
+      match: "subject/search",
+      response: () =>
+        searchResponse([
+          { subjectId: "HI", title: "Fight Club [Hindi]", releaseDate: "1999-10-15" },
+          { subjectId: "EN", title: "Fight Club", releaseDate: "1999-10-15" }
+        ])
+    },
+    { match: "list/subject?id=EN", response: () => detailResponse("fc-en") },
+    { match: "list/subject?id=HI", response: () => detailResponse("fc-hi") },
+    {
+      match: "subject/play?subjectId=EN",
+      response: () => playResponse([{ resolutions: "1080", url: "https://cdn/en-1080.mp4" }])
+    },
+    {
+      match: "subject/play?subjectId=HI",
+      response: () => playResponse([{ resolutions: "1080", url: "https://cdn/hi-1080.mp4" }])
+    }
+  ]);
+
+  try {
+    const streams = await getStreams(550, "movie");
+    assert.deepEqual(
+      streams.map((s) => [s.language, s.url]),
+      [
+        ["Hindi", "https://cdn/hi-1080.mp4"],
+        ["Original", "https://cdn/en-1080.mp4"]
+      ]
+    );
+  } finally {
+    mock.restore();
+  }
+});
+
 test("treats an untagged title as the original audio", async () => {
   const mock = mockFetch([
     meta,

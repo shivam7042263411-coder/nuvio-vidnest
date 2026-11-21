@@ -25,7 +25,7 @@ var PREFERRED_QUALITY = "1080";
 var SEARCH_TIMEOUT_MS = 8000;
 var PLAY_TIMEOUT_MS = 10000;
 var TOTAL_BUDGET_MS = 15000;
-var MAX_CANDIDATES = 3;
+var MAX_LANGUAGES = 2;
 
 var API_HEADERS = {
   "X-Client-Info": '{"timezone":"Africa/Nairobi"}',
@@ -259,6 +259,21 @@ function selectStreams(item, streams) {
   return out;
 }
 
+// MovieBox files each dub as its own release ("Title [Hindi]"), so keep only
+// the best release per language. That is what returns English and Hindi side
+// by side instead of whichever dub the search happens to rank first.
+function bestPerLanguage(candidates) {
+  var seen = {};
+  var out = [];
+  candidates.forEach(function (item) {
+    var language = languageOf(item);
+    if (!language || seen[language]) return;
+    seen[language] = true;
+    out.push(item);
+  });
+  return out;
+}
+
 async function sourcesFor(item, kind, season, episode, token, deadline) {
   if (Date.now() > deadline) return [];
   var subjectId = item.subjectId || item.id;
@@ -297,7 +312,7 @@ async function getStreams(tmdbId, mediaType, season, episode) {
     if (!meta.title) return [];
 
     var items = await searchSubjects(meta.title, kind, token);
-    var candidates = rankCandidates(items, meta).slice(0, MAX_CANDIDATES);
+    var candidates = bestPerLanguage(rankCandidates(items, meta)).slice(0, MAX_LANGUAGES);
 
     var final = [];
     var seen = {};
@@ -308,7 +323,6 @@ async function getStreams(tmdbId, mediaType, season, episode) {
         seen[stream.url] = true;
         final.push(stream);
       });
-      if (final.length) break;
     }
 
     log(kind + " " + id + " -> " + final.length + " source(s)");
