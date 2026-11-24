@@ -317,6 +317,35 @@ test("finds a film by a bare TMDB id when MovieBox rewords its title", async () 
   }
 });
 
+// MovieBox lists the anime "ERASED" (genre Anime) and the live-action remake
+// "Erased" (genre Drama) under one title. An anime id must pick the anime.
+test("an anime id never resolves to a same-titled live-action release", async () => {
+  const original = globalThis.fetch;
+  const seen = [];
+  globalThis.fetch = seriesFetch({
+    tmdbId: 65249,
+    name: "Erased",
+    year: "2016",
+    subjects: [
+      { subjectId: "LA", title: "Erased", subjectType: 2, hasResource: true, genre: "Drama, Fantasy, Mystery" },
+      { subjectId: "AN", title: "ERASED", subjectType: 2, hasResource: true, genre: "Anime" }
+    ],
+    heights: [1080],
+    seen
+  });
+
+  try {
+    const { getStreams } = require("../providers/moviebox.js");
+    const streams = await getStreams("kitsu:11110", "tv", 1, 1);
+    assert.equal(streams.length, 1);
+    assert.equal(streams[0].language, "Japanese");
+    const plays = seen.filter((u) => u.includes("subject/play"));
+    assert.ok(plays.length > 0 && plays.every((u) => u.includes("subjectId=AN")), "only the anime release is played");
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
 test("returns nothing for anime when only a dubbed release exists", async () => {
   const original = globalThis.fetch;
   globalThis.fetch = seriesFetch({

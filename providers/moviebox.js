@@ -7418,6 +7418,17 @@ var CryptoJS = (function () { var module = { exports: {} }; var exports = module
     return true;
   }
 
+  // Same-titled works collide across remakes: MovieBox lists the anime
+  // "ERASED" (Anime) and the live-action "Erased" (Drama, Fantasy, Mystery)
+  // under one title. An anime id must never resolve to a live-action release,
+  // so drop candidates MovieBox itself does not tag as anime. A candidate with
+  // no genre is kept so a missing field cannot lose coverage.
+  function isAnimeRelease(item) {
+    var genre = String((item && item.genre) || "").toLowerCase();
+    if (!genre) return true;
+    return genre.indexOf("anime") !== -1 || genre.indexOf("animation") !== -1;
+  }
+
   function trySeriesAttempts(attempts, candidates, token) {
     var index = 0;
     function next() {
@@ -7445,6 +7456,7 @@ var CryptoJS = (function () { var module = { exports: {} }; var exports = module
       })
       .then(function (found) {
         var candidates = found[0] || [];
+        if (isAnime) candidates = candidates.filter(isAnimeRelease);
         var token = found[1] || "";
         if (!isAnime) return seriesEpisodes(candidates, season, episode, token, false);
 
@@ -7605,8 +7617,9 @@ var CryptoJS = (function () { var module = { exports: {} }; var exports = module
       for (var s = 0; s < typeValid.length; s++) {
         var strict = typeValid[s];
         if (!isStrictMatch(strict.title, wantedTitle)) continue;
-        // Anime is Japanese audio only, so dubbed releases are not used.
-        if (isAnime && releaseAudio(strict.title) !== "original") continue;
+        // Anime is Japanese audio only, so dubbed releases are not used, and a
+        // live-action remake sharing the title must not be used either.
+        if (isAnime && (releaseAudio(strict.title) !== "original" || !isAnimeRelease(strict))) continue;
         validCandidates.push(strict);
       }
 
@@ -7619,6 +7632,7 @@ var CryptoJS = (function () { var module = { exports: {} }; var exports = module
         for (var l = 0; l < typeValid.length; l++) {
           var loose = typeValid[l];
           if (releaseAudio(loose.title) !== "original") continue;
+          if (isAnime && !isAnimeRelease(loose)) continue;
           if (!isLooseMatch(loose.title, wantedTitle, loose.releaseDate, parsedTitleInfo.year)) continue;
           validCandidates.push(loose);
         }
