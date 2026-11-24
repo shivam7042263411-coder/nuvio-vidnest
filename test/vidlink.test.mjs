@@ -215,6 +215,26 @@ test("returns nothing when VidLink answers with an error", async () => {
   }
 });
 
+// Regression: Nuvio's QuickJS plugin sandbox has no setTimeout, so a provider
+// that calls it returns nothing there (TV) while working on other devices.
+test("works in the Nuvio sandbox, which has no setTimeout", async () => {
+  const mock = mockFetch([
+    enc,
+    { match: "/movie/HASH123", response: () => json(payload({ 1080: quality("https://cdn/1080.mp4") })) }
+  ]);
+  const savedSetTimeout = globalThis.setTimeout;
+  delete globalThis.setTimeout;
+
+  try {
+    const streams = await getStreams(550, "movie");
+    assert.equal(streams.length, 1);
+    assert.equal(streams[0].url, "https://cdn/1080.mp4");
+  } finally {
+    globalThis.setTimeout = savedSetTimeout;
+    mock.restore();
+  }
+});
+
 test("drops duplicate subtitles and unknown language names", async () => {
   const mock = mockFetch([
     enc,

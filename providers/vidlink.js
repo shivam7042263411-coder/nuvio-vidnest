@@ -11,6 +11,10 @@
  * Headers matter: VidLink's media CDN (bcdn.hakunaymatata.com) answers 428
  * Forbidden to a browser User-Agent and 206 to "okhttp/4.12.0", so every
  * stream carries that UA for the player to forward.
+ *
+ * No request timeouts: Nuvio's plugin sandbox (QuickJS) has no setTimeout, so
+ * an AbortController-based timeout throws ReferenceError and the whole scrape
+ * returns nothing. That is how this provider used to fail on TV only.
  */
 
 var VIDLINK_API = "https://vidlink.pro/api/b";
@@ -20,8 +24,6 @@ var WEB_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTM
 var MEDIA_UA = "okhttp/4.12.0";
 
 var PREFERRED_QUALITY = 1080;
-var REQUEST_TIMEOUT_MS = 6000;
-var TOTAL_BUDGET_MS = 12000;
 
 var API_HEADERS = {
   "User-Agent": WEB_UA,
@@ -57,22 +59,16 @@ function log() {
   } catch (e) {}
 }
 
-async function request(url, headers, timeoutMs) {
-  var controller = new AbortController();
-  var timer = setTimeout(function () {
-    controller.abort();
-  }, timeoutMs);
-  try {
-    var response = await fetch(url, { headers: headers, signal: controller.signal });
-    if (!response.ok) throw new Error("HTTP " + response.status + " for " + url);
-    return await response.text();
-  } finally {
-    clearTimeout(timer);
-  }
+// The sandbox has no setTimeout/AbortController, so there is no request
+// timeout here; the host enforces its own 60s plugin deadline.
+async function request(url, headers) {
+  var response = await fetch(url, { headers: headers });
+  if (!response.ok) throw new Error("HTTP " + response.status + " for " + url);
+  return await response.text();
 }
 
-async function requestJson(url, headers, timeoutMs) {
-  return JSON.parse(await request(url, headers, timeoutMs));
+async function requestJson(url, headers) {
+  return JSON.parse(await request(url, headers));
 }
 
 function qualityLabel(height) {
@@ -183,12 +179,9 @@ async function getStreams(tmdbId, mediaType, season, episode) {
     var kind = mediaType === "tv" ? "tv" : "movie";
     if (kind === "tv" && (!isPositiveInt(season) || !isPositiveInt(episode))) return [];
 
-    var deadline = Date.now() + TOTAL_BUDGET_MS;
-
     var encoded = await requestJson(
       ENC_API + "?text=" + encodeURIComponent(id),
-      { "User-Agent": WEB_UA, Accept: "application/json" },
-      Math.min(REQUEST_TIMEOUT_MS, deadline - Date.now())
+      { "User-Agent": WEB_UA, Accept: "application/json" }
     );
     if (!encoded || !encoded.result) {
       log(kind + " " + id + " -> no encrypted id");
@@ -199,11 +192,7 @@ async function getStreams(tmdbId, mediaType, season, episode) {
       ? VIDLINK_API + "/tv/" + encodeURIComponent(encoded.result) + "/" + season + "/" + episode
       : VIDLINK_API + "/movie/" + encodeURIComponent(encoded.result);
 
-    var payload = await requestJson(
-      url,
-      API_HEADERS,
-      Math.max(1000, Math.min(REQUEST_TIMEOUT_MS, deadline - Date.now()))
-    );
+    var payload = await requestJson(url, API_HEADERS);
     var stream = payload && payload.stream;
     if (!stream) {
       log(kind + " " + id + " -> no stream");
