@@ -346,6 +346,33 @@ test("an anime id never resolves to a same-titled live-action release", async ()
   }
 });
 
+// Regression: Nuvio's QuickJS sandbox on Android TV has no setTimeout, so a
+// provider that calls it returns nothing there while working elsewhere.
+test("works in the Nuvio sandbox, which has no setTimeout", async () => {
+  const original = globalThis.fetch;
+  const seen = [];
+  globalThis.fetch = seriesFetch({
+    tmdbId: 46260,
+    name: "Naruto",
+    year: "2002",
+    subjects: [{ subjectId: "111", title: "Naruto", subjectType: 2, hasResource: true }],
+    heights: [1080],
+    seen
+  });
+  const savedTimeout = globalThis.setTimeout;
+  delete globalThis.setTimeout;
+
+  try {
+    const { getStreams } = require("../providers/moviebox.js");
+    const streams = await getStreams("kitsu:11:1", "tv", 1, 1);
+    assert.equal(streams.length, 1);
+    assert.equal(streams[0].language, "Japanese");
+  } finally {
+    globalThis.setTimeout = savedTimeout;
+    globalThis.fetch = original;
+  }
+});
+
 test("returns nothing for anime when only a dubbed release exists", async () => {
   const original = globalThis.fetch;
   globalThis.fetch = seriesFetch({
