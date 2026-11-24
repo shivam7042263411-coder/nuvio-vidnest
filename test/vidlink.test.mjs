@@ -228,6 +228,74 @@ test("resolves an imdb id through TMDB find", async () => {
   }
 });
 
+// Anime catalogues number long shows absolutely in season 1 (Naruto 1..220);
+// VidLink uses TMDB seasons, so episode 100 must become S2E48.
+test("maps an absolute anime episode onto TMDB seasons", async () => {
+  const mock = mockFetch([
+    { match: "arm.haglund.dev", response: () => json({ themoviedb: 46260 }) },
+    {
+      match: "api.themoviedb.org/3/tv/46260",
+      response: () =>
+        json({
+          seasons: [
+            { season_number: 1, episode_count: 52 },
+            { season_number: 2, episode_count: 52 },
+            { season_number: 3, episode_count: 54 },
+            { season_number: 4, episode_count: 62 }
+          ]
+        })
+    },
+    enc,
+    { match: "/tv/HASH123/2/48", response: () => json(payload({ 1080: quality("https://cdn/ep.mp4") })) }
+  ]);
+
+  try {
+    const streams = await getStreams("kitsu:11:100", "tv", 1, 100);
+    assert.equal(streams.length, 1);
+    assert.ok(mock.calls.some((call) => call.url.includes("/tv/HASH123/2/48")));
+  } finally {
+    mock.restore();
+  }
+});
+
+test("anime falls back to the best quality below 1080p", async () => {
+  const mock = mockFetch([
+    { match: "arm.haglund.dev", response: () => json({ themoviedb: 46260 }) },
+    { match: "api.themoviedb.org/3/tv/46260", response: () => json({ seasons: [{ season_number: 1, episode_count: 52 }] }) },
+    enc,
+    {
+      match: "/tv/HASH123/1/1",
+      response: () => json(payload({ 360: quality("https://cdn/360.mp4"), 720: quality("https://cdn/720.mp4") }))
+    }
+  ]);
+
+  try {
+    const streams = await getStreams("kitsu:11:1", "tv", 1, 1);
+    assert.equal(streams.length, 1);
+    assert.equal(streams[0].quality, "720p");
+    assert.equal(streams[0].url, "https://cdn/720.mp4");
+  } finally {
+    mock.restore();
+  }
+});
+
+test("does not remap or look up TMDB when the catalogue already uses TMDB seasons", async () => {
+  const mock = mockFetch([
+    { match: "arm.haglund.dev", response: () => json({ themoviedb: 220542 }) },
+    enc,
+    { match: "/tv/HASH123/2/3", response: () => json(payload({ 1080: quality("https://cdn/ep.mp4") })) }
+  ]);
+
+  try {
+    const streams = await getStreams("kitsu:48649:3", "tv", 2, 3);
+    assert.equal(streams.length, 1);
+    assert.ok(!mock.calls.some((call) => call.url.includes("api.themoviedb.org/3/tv/")));
+    assert.ok(mock.calls.some((call) => call.url.includes("/tv/HASH123/2/3")));
+  } finally {
+    mock.restore();
+  }
+});
+
 test("falls back to the second TMDB host when the first resets", async () => {
   const mock = mockFetch([
     {

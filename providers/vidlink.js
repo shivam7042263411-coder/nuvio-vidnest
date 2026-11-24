@@ -8,7 +8,8 @@
  * first, so anime catalogues work too.
  *
  * Source policy: MP4 only, no HLS, and 1080p or 4K only. A title whose best
- * quality is below 1080p returns nothing.
+ * quality is below 1080p returns nothing, except anime, where VidLink often
+ * only carries 480p/720p and the best available quality is used instead.
  *
  * Headers matter: VidLink's media CDN (bcdn.hakunaymatata.com) answers 428
  * Forbidden to a browser User-Agent and 206 to "okhttp/4.12.0", so every
@@ -82,25 +83,30 @@ var ARM_API = "https://arm.haglund.dev/api/v2/ids";
 var ARM_SOURCES = { kitsu: "kitsu", mal: "myanimelist", myanimelist: "myanimelist", anilist: "anilist", anidb: "anidb" };
 var TMDB_KEY = "1865f43a0549ca50d341dd9ab8b29f49";
 
-async function tmdbFind(externalSource, value) {
-  var query = "/3/find/" + encodeURIComponent(value) + "?external_source=" + externalSource + "&api_key=" + TMDB_KEY;
+async function tmdbJson(path) {
   var hosts = ["https://api.themoviedb.org", "https://api.tmdb.org"];
+  var query = path + (path.indexOf("?") < 0 ? "?api_key=" : "&api_key=") + TMDB_KEY;
   for (var i = 0; i < hosts.length; i++) {
     try {
-      var body = await requestJson(hosts[i] + query, { Accept: "application/json" });
-      var results = (body && body.tv_results) || (body && body.movie_results) || [];
-      return results.length && isPositiveInt(results[0].id) ? String(results[0].id) : "";
+      return await requestJson(hosts[i] + query, { Accept: "application/json" });
     } catch (e) {}
   }
-  return "";
+  return null;
+}
+
+async function tmdbFind(externalSource, value) {
+  var body = await tmdbJson("/3/find/" + encodeURIComponent(value) + "?external_source=" + externalSource);
+  var results = (body && body.tv_results) || (body && body.movie_results) || [];
+  return results.length && isPositiveInt(results[0].id) ? String(results[0].id) : "";
 }
 
 // shortcut: a single mapping service (ARM) resolves anime ids. If it is down,
 // an anime id resolves to nothing and the title returns no sources, exactly as
 // it did before; add a second source only if that proves flaky.
-async function resolveTmdbId(rawId) {
-  var id = String(rawId == null ? "" : rawId).trim().replace(/^(tmdb|movie|series)[:/]/i, "");
-  if (/^\d+$/.test(id)) return id;
+async function resolveId(rawId) {
+  var raw = String(rawId == null ? "" : rawId).trim();
+  var id = raw.replace(/^(tmdb|movie|series)[:/]/i, "");
+  if (/^\d+$/.test(id)) return { id: id, anime: false };
 
   var match = /^([a-z-]+):(.+)$/i.exec(id);
   var source = match ? match[1].toLowerCase() : "";
@@ -113,14 +119,39 @@ async function resolveTmdbId(rawId) {
         { Accept: "application/json" }
       );
       var tmdb = mapped && mapped.themoviedb != null ? String(mapped.themoviedb).split(",")[0].trim() : "";
-      if (isPositiveInt(tmdb)) return tmdb;
+      if (isPositiveInt(tmdb)) return { id: tmdb, anime: true };
     } catch (e) {}
-    return "";
+    return { id: "", anime: true };
   }
-  if (source === "tvdb" && isPositiveInt(value)) return await tmdbFind("tvdb_id", value);
+  if (source === "tvdb" && isPositiveInt(value)) return { id: await tmdbFind("tvdb_id", value), anime: false };
 
   var imdb = /(tt\d{5,})/i.exec(id);
-  return imdb ? await tmdbFind("imdb_id", imdb[1]) : "";
+  return { id: imdb ? await tmdbFind("imdb_id", imdb[1]) : "", anime: false };
+}
+
+// Long-running anime catalogues number episodes absolutely inside one season
+// ("kitsu:11:100" = Naruto episode 100), but TMDB — and so VidLink — split
+// those into seasons. When an episode is outside its TMDB season, read the
+// number as absolute and map it onto TMDB's season layout. Returns null when
+// the number already fits the requested season.
+async function mapAnimeEpisode(tmdbId, season, episode) {
+  var show = await tmdbJson("/3/tv/" + encodeURIComponent(tmdbId));
+  var seasons = ((show && show.seasons) || [])
+    .filter(function (s) { return s && s.season_number >= 1 && s.episode_count > 0; })
+    .sort(function (a, b) { return a.season_number - b.season_number; });
+
+  var current = null;
+  seasons.forEach(function (s) { if (s.season_number === season) current = s; });
+  if (!current || episode <= current.episode_count) return null;
+
+  var offset = 0;
+  for (var i = 0; i < seasons.length; i++) {
+    if (episode <= offset + seasons[i].episode_count) {
+      return { season: seasons[i].season_number, episode: episode - offset };
+    }
+    offset += seasons[i].episode_count;
+  }
+  return null;
 }
 
 function qualityLabel(height) {
@@ -176,8 +207,10 @@ function playbackHeaders(source) {
   return headers;
 }
 
-// One entry per declared quality, keeping only 1080p and 4K.
-function selectStreams(stream, subtitles) {
+// One entry per declared quality, keeping only 1080p and 4K. For anime
+// (allowBelowPreferred) fall back to the best available quality instead of
+// returning nothing, because VidLink often only carries 480p/720p for it.
+function selectStreams(stream, subtitles, allowBelowPreferred) {
   var qualities = stream && stream.qualities ? stream.qualities : null;
   if (!qualities) return [];
 
@@ -196,10 +229,16 @@ function selectStreams(stream, subtitles) {
   });
   if (!entries.length) return [];
 
-  // 1080p and 4K only. A title whose best is below 1080p returns nothing.
+  // 1080p and 4K only; a title whose best is below 1080p returns nothing,
+  // unless it is anime, where playing the best available beats nothing.
   var chosen = entries.filter(function (entry) {
     return entry.height >= PREFERRED_QUALITY;
   });
+  if (!chosen.length && allowBelowPreferred) {
+    chosen = [entries.reduce(function (best, entry) {
+      return entry.height > best.height ? entry : best;
+    })];
+  }
 
   return chosen.map(function (entry) {
     return {
@@ -225,14 +264,26 @@ function isPositiveInt(value) {
 
 async function getStreams(tmdbId, mediaType, season, episode) {
   try {
-    var id = await resolveTmdbId(tmdbId);
-    if (!id) {
+    var resolved = await resolveId(tmdbId);
+    if (!resolved.id) {
       log("could not resolve a TMDB id from " + tmdbId);
       return [];
     }
+    var id = resolved.id;
 
     var kind = mediaType === "tv" ? "tv" : "movie";
     if (kind === "tv" && (!isPositiveInt(season) || !isPositiveInt(episode))) return [];
+
+    // Anime catalogues number long shows absolutely in season 1; map that onto
+    // the TMDB season VidLink actually uses.
+    if (resolved.anime && kind === "tv" && season === 1) {
+      var mapped = await mapAnimeEpisode(id, season, episode);
+      if (mapped) {
+        log("absolute episode " + episode + " -> S" + mapped.season + "E" + mapped.episode);
+        season = mapped.season;
+        episode = mapped.episode;
+      }
+    }
 
     var encoded = await requestJson(
       ENC_API + "?text=" + encodeURIComponent(id),
@@ -254,7 +305,7 @@ async function getStreams(tmdbId, mediaType, season, episode) {
       return [];
     }
 
-    var streams = selectStreams(stream, subtitlesOf(stream));
+    var streams = selectStreams(stream, subtitlesOf(stream), resolved.anime);
     log(kind + " " + id + " -> " + streams.length + " source(s)");
     return streams;
   } catch (e) {
