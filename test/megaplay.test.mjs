@@ -162,6 +162,55 @@ test("returns nothing when the payload carries no encrypted sources", async () =
   }
 });
 
+test("fails over to the alternate server when the primary host is down", async () => {
+  const mock = mockFetch([
+    { match: "/stream/mal/21/1000/sub", response: () => page(38373) },
+    {
+      match: "/stream/getSources",
+      response: (target) =>
+        target.includes("s=tcdn")
+          ? sources("https://megap.shiora.top/hash/master.m3u8")
+          : sources("https://fetch.nexabloom.top/anime/hash/master.m3u8")
+    },
+    { match: "fetch.nexabloom.top", response: () => new Response("", { status: 404 }) },
+    { match: "megap.shiora.top", response: () => new Response(master, { status: 200 }) }
+  ]);
+
+  try {
+    const streams = await getStreams("mal:21:1000", "tv", 1, 1000);
+    assert.equal(streams.length, 1);
+    assert.equal(streams[0].url, "https://megap.shiora.top/hash/master.m3u8");
+    assert.equal(streams[0].quality, "1080p");
+  } finally {
+    mock.restore();
+  }
+});
+
+test("fails over to the check_domain fallback host when both hosts are down", async () => {
+  const mock = mockFetch([
+    { match: "/stream/mal/21/1000/sub", response: () => page(38373) },
+    {
+      match: "/stream/getSources",
+      response: (target) =>
+        target.includes("s=tcdn")
+          ? json({ tracks: [] })
+          : sources("https://fetch.nexabloom.top/anime/hash/master.m3u8")
+    },
+    { match: "check_domain.json", response: () => json({ fallback: "xdw5v.qeltrix.top" }) },
+    { match: "fetch.nexabloom.top", response: () => new Response("", { status: 404 }) },
+    { match: "xdw5v.qeltrix.top", response: () => new Response(master, { status: 200 }) }
+  ]);
+
+  try {
+    const streams = await getStreams("mal:21:1000", "tv", 1, 1000);
+    assert.equal(streams.length, 1);
+    assert.equal(streams[0].url, "https://xdw5v.qeltrix.top/anime/hash/master.m3u8");
+    assert.equal(streams[0].quality, "1080p");
+  } finally {
+    mock.restore();
+  }
+});
+
 // Regression: Nuvio's QuickJS sandbox has no setTimeout, so a provider that
 // calls it returns nothing there (TV) while working on other devices.
 test("works in the Nuvio sandbox, which has no setTimeout", async () => {

@@ -113,16 +113,54 @@ async function decryptSources(encrypted) {
   return JSON.parse(new TextDecoder().decode(plain));
 }
 
-// The master playlist is a single rendition; read its height for the label.
-// Best effort — an unreachable playlist still yields a playable stream.
-async function resolutionOf(url) {
+// The master playlist is a single rendition. Returns its text, or "" when the
+// host is unreachable — the signal to fail over to a mirror.
+async function masterOf(url) {
   try {
-    var master = await request(url, STREAM_HEADERS);
-    var match = /RESOLUTION=\d+x(\d+)/i.exec(master);
-    return match ? Number(match[1]) : 0;
+    return await request(url, STREAM_HEADERS);
   } catch (e) {
-    return 0;
+    return "";
   }
+}
+
+function heightOf(master) {
+  var match = /RESOLUTION=\d+x(\d+)/i.exec(master || "");
+  return match ? Number(match[1]) : 0;
+}
+
+function swapHost(url, host) {
+  return String(url).replace(/^https?:\/\/[^/]+/i, "https://" + host);
+}
+
+// The same file is mirrored on MegaPlay's alternate server (?s=tcdn) and on the
+// host its check_domain.json declares. Collect those so a dead primary host can
+// fail over instead of returning a URL the player cannot open.
+async function mirrorFiles(fileId, primaryFile) {
+  var mirrors = [];
+  try {
+    var alt = await requestJson(
+      MEGAPLAY_ORIGIN + "/stream/getSources?id=" + fileId + "&s=tcdn",
+      Object.assign({ "X-Requested-With": "XMLHttpRequest" }, API_HEADERS)
+    );
+    if (alt && alt.enc) {
+      var altSources = await decryptSources(alt.enc);
+      if (altSources && altSources.file && String(altSources.file) !== primaryFile) {
+        mirrors.push(String(altSources.file));
+      }
+    }
+  } catch (e) {}
+  try {
+    var domain = await requestJson(MEGAPLAY_ORIGIN + "/lib/check_domain.json", {
+      Accept: "application/json",
+      "User-Agent": WEB_UA,
+      "Referer": MEGAPLAY_ORIGIN + "/"
+    });
+    if (domain && domain.fallback) {
+      var swapped = swapHost(primaryFile, String(domain.fallback));
+      if (mirrors.indexOf(swapped) === -1) mirrors.push(swapped);
+    }
+  } catch (e) {}
+  return mirrors;
 }
 
 function qualityLabel(height) {
@@ -182,12 +220,21 @@ async function getStreams(rawId, mediaType, season, episode) {
       return [];
     }
 
-    var label = qualityLabel(await resolutionOf(sources.file));
+    var playable = String(sources.file);
+    var master = await masterOf(playable);
+    if (!master) {
+      var mirrors = await mirrorFiles(fileId[1], playable);
+      for (var m = 0; m < mirrors.length && !master; m++) {
+        master = await masterOf(mirrors[m]);
+        if (master) playable = mirrors[m];
+      }
+    }
+    var label = qualityLabel(heightOf(master));
     log("mal:" + malId + " ep" + episodeNumber + " -> " + label);
     return [{
       name: "MegaPlay • " + label + " (Sub)",
       title: "MegaPlay • " + label + " • HLS",
-      url: String(sources.file),
+      url: playable,
       quality: label,
       language: "Japanese",
       type: "hls",
