@@ -6898,6 +6898,52 @@ var CryptoJS = (function () { var module = { exports: {} }; var exports = module
     });
   }
 
+  // Nuvio passes whatever id the catalogue uses; anime catalogues use
+  // "kitsu:47083:12" style ids. Map anything non-TMDB to a TMDB id first
+  // (same rules as vidlink.js) so MovieBox works with those catalogues too.
+  var ARM_API = "https://arm.haglund.dev/api/v2/ids";
+  var ARM_SOURCES = { kitsu: "kitsu", mal: "myanimelist", myanimelist: "myanimelist", anilist: "anilist", anidb: "anidb" };
+
+  function mbTmdbFind(externalSource, value) {
+    var query = "/3/find/" + encodeURIComponent(value) + "?external_source=" + externalSource + "&api_key=" + TMDB_KEY;
+    function get(host) {
+      return fetch(host + query)
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .catch(function () { return null; });
+    }
+    function pick(b) {
+      var list = (b && b.tv_results && b.tv_results.length) ? b.tv_results : (b && b.movie_results) || [];
+      return (list.length && list[0].id) ? String(list[0].id) : "";
+    }
+    return get("https://api.themoviedb.org").then(function (b) {
+      return b ? pick(b) : get("https://api.tmdb.org").then(pick);
+    });
+  }
+
+  function resolveMbTmdbId(rawId) {
+    var id = String(rawId == null ? "" : rawId).trim().replace(/^(tmdb|movie|series)[:/]/i, "");
+    if (!id) return Promise.resolve("");
+    if (/^\d+$/.test(id)) return Promise.resolve(id);
+
+    var m = /^([a-z-]+):(.+)$/i.exec(id);
+    var source = m ? m[1].toLowerCase() : "";
+    var value = (m ? m[2] : id).split(":")[0].split("/")[0];
+
+    if (ARM_SOURCES[source]) {
+      return fetch(ARM_API + "?source=" + ARM_SOURCES[source] + "&id=" + encodeURIComponent(value))
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (b) {
+          var tmdb = b && b.themoviedb != null ? String(b.themoviedb).split(",")[0].trim() : "";
+          return /^\d+$/.test(tmdb) ? tmdb : "";
+        })
+        .catch(function () { return ""; });
+    }
+    if (source === "tvdb" && /^\d+$/.test(value)) return mbTmdbFind("tvdb_id", value);
+
+    var imdb = /(tt\d{5,})/i.exec(id);
+    return imdb ? mbTmdbFind("imdb_id", imdb[1]) : Promise.resolve("");
+  }
+
   function resolveTitle(tmdbId, mediaType) {
     var isTv = mediaType === "tv" || mediaType === "series";
     var isImdb = typeof tmdbId === "string" && tmdbId.indexOf("tt") === 0;
@@ -7092,7 +7138,10 @@ var CryptoJS = (function () { var module = { exports: {} }; var exports = module
     var isTv = mediaType === "tv" || mediaType === "series";
     var parsedTitleInfo = null;
 
-    return ensureSession().then(function () {
+    return resolveMbTmdbId(tmdbId).then(function (resolvedId) {
+      tmdbId = resolvedId || tmdbId;
+      return ensureSession();
+    }).then(function () {
       return resolveTitle(tmdbId, mediaType);
     }).then(function (info) {
       if (!info || !info.title) throw new Error("Could not resolve title");

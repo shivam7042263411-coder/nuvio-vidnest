@@ -192,6 +192,64 @@ test("skips quality entries without a URL", async () => {
   }
 });
 
+// Nuvio's anime catalogues (AIOMetadata) pass episode ids like "kitsu:47083:1",
+// which are not TMDB ids; they must be resolved before scraping.
+test("resolves a kitsu episode id through ARM before scraping", async () => {
+  const mock = mockFetch([
+    { match: "arm.haglund.dev", response: () => json({ themoviedb: 220542, "themoviedb-season": 1 }) },
+    enc,
+    { match: "/tv/HASH123/1/1", response: () => json(payload({ 1080: quality("https://cdn/ep.mp4") })) }
+  ]);
+
+  try {
+    const streams = await getStreams("kitsu:47083:1", "tv", 1, 1);
+    assert.equal(streams.length, 1);
+    const armCall = mock.calls.find((call) => call.url.includes("arm.haglund.dev"));
+    assert.ok(armCall, "ARM should be called");
+    assert.ok(armCall.url.includes("source=kitsu") && armCall.url.includes("id=47083"));
+  } finally {
+    mock.restore();
+  }
+});
+
+test("resolves an imdb id through TMDB find", async () => {
+  const mock = mockFetch([
+    { match: "external_source=imdb_id", response: () => json({ tv_results: [{ id: 220542 }] }) },
+    enc,
+    { match: "/tv/HASH123/1/1", response: () => json(payload({ 1080: quality("https://cdn/ep.mp4") })) }
+  ]);
+
+  try {
+    const streams = await getStreams("tt26743760:1:1", "tv", 1, 1);
+    assert.equal(streams.length, 1);
+    assert.ok(mock.calls.some((call) => call.url.includes("external_source=imdb_id")));
+  } finally {
+    mock.restore();
+  }
+});
+
+test("falls back to the second TMDB host when the first resets", async () => {
+  const mock = mockFetch([
+    {
+      match: "api.themoviedb.org",
+      response: () => {
+        throw new Error("ECONNRESET");
+      }
+    },
+    { match: "api.tmdb.org", response: () => json({ tv_results: [{ id: 220542 }] }) },
+    enc,
+    { match: "/tv/HASH123/1/1", response: () => json(payload({ 1080: quality("https://cdn/ep.mp4") })) }
+  ]);
+
+  try {
+    const streams = await getStreams("tt26743760:1:1", "tv", 1, 1);
+    assert.equal(streams.length, 1);
+    assert.ok(mock.calls.some((call) => call.url.includes("api.tmdb.org")));
+  } finally {
+    mock.restore();
+  }
+});
+
 test("returns nothing for an invalid id without making a request", async () => {
   const mock = mockFetch([]);
   try {

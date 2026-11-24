@@ -3,7 +3,9 @@
  *
  * Uses VidLink's own JSON API. The TMDB id is first encrypted by enc-dec.app
  * (the same helper the 7movies front end uses), then the API returns direct
- * progressive MP4 qualities plus subtitle tracks.
+ * progressive MP4 qualities plus subtitle tracks. Ids from non-TMDB
+ * catalogues (kitsu:/mal:/anilist:/anidb:/tvdb:/imdb) are resolved to TMDB
+ * first, so anime catalogues work too.
  *
  * Source policy: MP4 only, no HLS, and 1080p or 4K only. A title whose best
  * quality is below 1080p returns nothing.
@@ -69,6 +71,56 @@ async function request(url, headers) {
 
 async function requestJson(url, headers) {
   return JSON.parse(await request(url, headers));
+}
+
+// Nuvio passes whatever id the catalogue uses. TMDB ids arrive as digits and
+// imdb ids as "tt...", but anime catalogues (AIOMetadata) use episode ids like
+// "kitsu:47083:12" or "mal:52991:3", which no TMDB lookup accepts as-is.
+// Resolve those to a TMDB id so the provider works with any catalogue and
+// numbering the user picks.
+var ARM_API = "https://arm.haglund.dev/api/v2/ids";
+var ARM_SOURCES = { kitsu: "kitsu", mal: "myanimelist", myanimelist: "myanimelist", anilist: "anilist", anidb: "anidb" };
+var TMDB_KEY = "1865f43a0549ca50d341dd9ab8b29f49";
+
+async function tmdbFind(externalSource, value) {
+  var query = "/3/find/" + encodeURIComponent(value) + "?external_source=" + externalSource + "&api_key=" + TMDB_KEY;
+  var hosts = ["https://api.themoviedb.org", "https://api.tmdb.org"];
+  for (var i = 0; i < hosts.length; i++) {
+    try {
+      var body = await requestJson(hosts[i] + query, { Accept: "application/json" });
+      var results = (body && body.tv_results) || (body && body.movie_results) || [];
+      return results.length && isPositiveInt(results[0].id) ? String(results[0].id) : "";
+    } catch (e) {}
+  }
+  return "";
+}
+
+// shortcut: a single mapping service (ARM) resolves anime ids. If it is down,
+// an anime id resolves to nothing and the title returns no sources, exactly as
+// it did before; add a second source only if that proves flaky.
+async function resolveTmdbId(rawId) {
+  var id = String(rawId == null ? "" : rawId).trim().replace(/^(tmdb|movie|series)[:/]/i, "");
+  if (/^\d+$/.test(id)) return id;
+
+  var match = /^([a-z-]+):(.+)$/i.exec(id);
+  var source = match ? match[1].toLowerCase() : "";
+  var value = (match ? match[2] : id).split(":")[0].split("/")[0];
+
+  if (ARM_SOURCES[source]) {
+    try {
+      var mapped = await requestJson(
+        ARM_API + "?source=" + ARM_SOURCES[source] + "&id=" + encodeURIComponent(value),
+        { Accept: "application/json" }
+      );
+      var tmdb = mapped && mapped.themoviedb != null ? String(mapped.themoviedb).split(",")[0].trim() : "";
+      if (isPositiveInt(tmdb)) return tmdb;
+    } catch (e) {}
+    return "";
+  }
+  if (source === "tvdb" && isPositiveInt(value)) return await tmdbFind("tvdb_id", value);
+
+  var imdb = /(tt\d{5,})/i.exec(id);
+  return imdb ? await tmdbFind("imdb_id", imdb[1]) : "";
 }
 
 function qualityLabel(height) {
@@ -173,8 +225,11 @@ function isPositiveInt(value) {
 
 async function getStreams(tmdbId, mediaType, season, episode) {
   try {
-    var id = String(tmdbId == null ? "" : tmdbId).trim();
-    if (!/^\d+$/.test(id)) return [];
+    var id = await resolveTmdbId(tmdbId);
+    if (!id) {
+      log("could not resolve a TMDB id from " + tmdbId);
+      return [];
+    }
 
     var kind = mediaType === "tv" ? "tv" : "movie";
     if (kind === "tv" && (!isPositiveInt(season) || !isPositiveInt(episode))) return [];
