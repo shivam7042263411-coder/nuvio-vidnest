@@ -124,6 +124,32 @@ test("plays an anime series episode through the H5 API with Japanese audio", asy
   }
 });
 
+// TMDB spells it "Dan Da Dan"; MovieBox spells it "Dandadan". Spacing must not
+// hide a whole series from the catalogue.
+test("matches a MovieBox title that only differs by spacing", async () => {
+  const original = globalThis.fetch;
+  const seen = [];
+  globalThis.fetch = seriesFetch({
+    tmdbId: 240411,
+    name: "Dan Da Dan",
+    year: "2024",
+    subjects: [{ subjectId: "999", title: "Dandadan S1-S2", subjectType: 2, hasResource: true }],
+    heights: [1080],
+    seen
+  });
+
+  try {
+    const { getStreams } = require("../providers/moviebox.js");
+    const streams = await getStreams("mal:57334", "tv", 1, 1);
+    assert.equal(streams.length, 1);
+    assert.equal(streams[0].quality, "1080p");
+    assert.equal(streams[0].language, "Japanese");
+    assert.ok(seen.some((u) => u.includes("subject/play") && u.includes("subjectId=999")));
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
 test("plays the season the app passed when MovieBox splits merged TMDB seasons", async () => {
   const original = globalThis.fetch;
   const seen = [];

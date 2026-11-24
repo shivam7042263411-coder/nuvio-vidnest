@@ -6759,7 +6759,9 @@ var CryptoJS = (function () { var module = { exports: {} }; var exports = module
     var baseCand = getBaseTitle(candTitle);
     var baseWanted = getBaseTitle(wantedTitle);
     if (!baseCand || !baseWanted) return false;
-    return baseCand === baseWanted;
+    // TMDB and MovieBox often space titles differently ("Dan Da Dan" vs
+    // "Dandadan"), so word sequence must match but spacing must not.
+    return baseCand.replace(/ /g, "") === baseWanted.replace(/ /g, "");
   }
 
   function getLanguageTag(candTitle, candCorner, resTitle, url, isAnime) {
