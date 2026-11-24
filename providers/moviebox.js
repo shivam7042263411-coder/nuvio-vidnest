@@ -6967,7 +6967,7 @@ var CryptoJS = (function () { var module = { exports: {} }; var exports = module
         return r.json();
       }).then(function (cData) {
         if (cData && cData.meta && cData.meta.name) {
-          return { title: cData.meta.name, year: parseInt(cData.meta.year) || null };
+          return { title: cData.meta.name, year: parseInt(cData.meta.year) || null, seasons: [] };
         }
         throw new Error("Cinemeta not found");
       }).catch(function () {
@@ -6988,7 +6988,7 @@ var CryptoJS = (function () { var module = { exports: {} }; var exports = module
       var title = isTv ? d.name : d.title;
       var dateStr = isTv ? d.first_air_date : d.release_date;
       var year = dateStr ? parseInt(dateStr.split("-")[0]) : null;
-      return { title: title, year: year };
+      return { title: title, year: year, seasons: isTv ? (d.seasons || []) : [] };
     }).catch(function () {
       var url2 = "https://api.tmdb.org/3/" + tmdbType + "/" + tmdbId + "?api_key=" + TMDB_KEY;
       return fetch(url2).then(function (r) {
@@ -6997,7 +6997,7 @@ var CryptoJS = (function () { var module = { exports: {} }; var exports = module
         var title = isTv ? d.name : d.title;
         var dateStr = isTv ? d.first_air_date : d.release_date;
         var year = dateStr ? parseInt(dateStr.split("-")[0]) : null;
-        return { title: title, year: year };
+        return { title: title, year: year, seasons: isTv ? (d.seasons || []) : [] };
       });
     });
   }
@@ -7222,6 +7222,68 @@ var CryptoJS = (function () { var module = { exports: {} }; var exports = module
     });
   }
 
+  // Films on MovieBox play as se=0&ep=0 through the web player, which lists
+  // files the mobile API does not (anime films often have an empty shell there).
+  function h5MovieStreams(candidates, title, isAnime, token) {
+    var index = 0;
+    var out = [];
+    function next() {
+      if (index >= candidates.length) return Promise.resolve(out);
+      var candidate = candidates[index++];
+      return h5Play(candidate.subjectId, 0, 0, token).then(function (webStreams) {
+        (webStreams || []).forEach(function (stream) {
+          if (!isValidStreamUrl(stream.url)) return;
+          // tran-audio files are the Indian dub baked into the same release.
+          var dubbed = String(stream.url).indexOf("/tran-audio/") !== -1;
+          if (isAnime && dubbed) return;
+          var height = parseInt(stream.resolutions, 10) || 0;
+          var quality = height >= 2160 ? "4K" : (height >= 1080 ? "1080p" : (height >= 720 ? "720p" : (height >= 480 ? "480p" : "360p")));
+          var size = formatBytes(stream.size);
+          var sizeLabel = size && size !== "Unknown" ? " (" + size + ")" : "";
+          out.push({
+            name: "MovieBox " + (dubbed ? "[Hindi]" : (isAnime ? "[Japanese]" : "[English]")) + " - " + quality + sizeLabel + " [Direct MP4]",
+            title: (candidate.title || title) + " [" + quality + "]",
+            url: stream.url,
+            quality: quality,
+            size: size,
+            language: dubbed ? "Hindi" : (isAnime ? "Japanese" : "Original"),
+            type: "mp4",
+            provider: "moviebox",
+            headers: H5_MEDIA_HEADERS,
+            behaviorHints: { notWebReady: false }
+          });
+        });
+        return out.length ? out : next();
+      });
+    }
+    return next();
+  }
+
+  // 1080p and 4K only, except anime: MovieBox often tops out at 720p and
+  // playing the best available beats nothing.
+  function finalizeMovieStreams(streams, isAnime) {
+    var best = 0;
+    streams.forEach(function (s) {
+      best = Math.max(best, qualityHeight(s.quality));
+    });
+    streams = isAnime
+      ? streams.filter(function (s) { return qualityHeight(s.quality) === best; })
+      : streams.filter(function (s) { return s.quality === "4K" || s.quality === "1080p"; });
+    var seen = {};
+    streams = streams.filter(function (s) {
+      if (seen[s.url]) return false;
+      seen[s.url] = true;
+      return true;
+    });
+    streams.sort(function (a, b) {
+      var qMap = { "4K": 5, "1080p": 4, "720p": 3, "480p": 2, "360p": 1 };
+      var qDiff = (qMap[b.quality] || 0) - (qMap[a.quality] || 0);
+      if (qDiff !== 0) return qDiff;
+      return a.name.localeCompare(b.name);
+    });
+    return streams;
+  }
+
   function searchSeries(title) {
     return mbRequest("POST", "/wefeed-mobile-bff/subject-api/search/v2", {}, {
       keyword: title,
@@ -7270,10 +7332,13 @@ var CryptoJS = (function () { var module = { exports: {} }; var exports = module
           var url = String((stream && stream.url) || "");
           if (!url || seen[url] || stream.vipLocked || !isValidStreamUrl(url)) continue;
           if (String(stream.format || "").toUpperCase() !== "MP4") continue;
+          // tran-audio files are the Indian dub baked into the same release.
+          var dubbed = url.indexOf("/tran-audio/") !== -1;
+          if (isAnime && dubbed) continue;
           var height = parseInt(stream.resolutions || stream.resolution, 10) || 0;
           if (!height) continue;
           seen[url] = true;
-          collected.push({ url: url, height: height, size: Number(stream.size) || 0, language: entry.audio });
+          collected.push({ url: url, height: height, size: Number(stream.size) || 0, language: dubbed ? "hindi" : entry.audio });
         }
         return next(index + 1);
       });
@@ -7285,8 +7350,88 @@ var CryptoJS = (function () { var module = { exports: {} }; var exports = module
     return quality === "4K" ? 2160 : (parseInt(quality, 10) || 0);
   }
 
+  // The episode number a catalogue puts in the video id ("kitsu:11:45"). It is
+  // authoritative: anime stay numbered continuously even when the app shows
+  // them split into seasons.
+  function episodeFromVideoId(rawId) {
+    var m = /^[a-z-]+:\d+:(\d+)$/i.exec(String(rawId == null ? "" : rawId).trim());
+    return m ? Number(m[1]) : 0;
+  }
+
+  // The TMDB season a kitsu/mal/anilist entry maps to. Anime entries number
+  // episodes within themselves, so this is the offset to an absolute episode.
+  function armSeason(rawId) {
+    var m = /^(kitsu|mal|myanimelist|anilist|anidb):(\d+):\d+$/i.exec(String(rawId == null ? "" : rawId).trim());
+    if (!m) return Promise.resolve(1);
+    var source = m[1].toLowerCase();
+    source = source === "mal" ? "myanimelist" : source;
+    return fetch(ARM_API + "?source=" + source + "&id=" + encodeURIComponent(m[2]))
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (b) {
+        var season = b && b["themoviedb-season"] != null ? parseInt(b["themoviedb-season"], 10) : 0;
+        return season > 0 ? season : 1;
+      })
+      .catch(function () { return 1; });
+  }
+
+  function tmdbSeasons(meta) {
+    return ((meta && meta.seasons) || [])
+      .filter(function (s) { return s && s.season_number >= 1 && s.episode_count > 0; })
+      .sort(function (a, b) { return a.season_number - b.season_number; });
+  }
+
+  function seasonOffset(seasons, seasonNumber) {
+    var offset = 0;
+    for (var i = 0; i < seasons.length; i++) {
+      if (seasons[i].season_number >= seasonNumber) break;
+      offset += seasons[i].episode_count;
+    }
+    return offset;
+  }
+
+  function tmdbPosition(seasons, absolute) {
+    var offset = 0;
+    for (var i = 0; i < seasons.length; i++) {
+      if (absolute <= offset + seasons[i].episode_count) {
+        return { season: seasons[i].season_number, episode: absolute - offset };
+      }
+      offset += seasons[i].episode_count;
+    }
+    return null;
+  }
+
+  // Every word of the shorter title appears in the longer one and the years
+  // agree. Used for anime films, which MovieBox lists under shortened titles.
+  function isLooseMatch(candTitle, wantedTitle, candDate, wantedYear) {
+    var candWords = getBaseTitle(candTitle).split(" ").filter(Boolean);
+    var wantedWords = getBaseTitle(wantedTitle).split(" ").filter(Boolean);
+    if (!candWords.length || !wantedWords.length) return false;
+    var shortWords = candWords.length <= wantedWords.length ? candWords : wantedWords;
+    var longWords = candWords.length <= wantedWords.length ? wantedWords : candWords;
+    for (var i = 0; i < shortWords.length; i++) {
+      if (longWords.indexOf(shortWords[i]) === -1) return false;
+    }
+    var candYear = parseInt(String(candDate || "").slice(0, 4), 10);
+    if (candYear && wantedYear && Math.abs(candYear - wantedYear) > 1) return false;
+    return true;
+  }
+
+  function trySeriesAttempts(attempts, candidates, token) {
+    var index = 0;
+    function next() {
+      if (index >= attempts.length) return Promise.resolve([]);
+      var attempt = attempts[index++];
+      return seriesEpisodes(candidates, attempt.season, attempt.episode, token, true).then(function (found) {
+        return found.length ? found : next();
+      });
+    }
+    return next();
+  }
+
   function getSeriesStreams(rawId, season, episode, isAnime) {
     var meta = null;
+    var shownSeason = season;
+    var shownEpisode = episode;
     return resolveMbTmdbId(rawId)
       .then(function (id) {
         return Promise.all([resolveTitle(id || rawId, "tv"), ensureSession()]);
@@ -7297,7 +7442,33 @@ var CryptoJS = (function () { var module = { exports: {} }; var exports = module
         return Promise.all([searchSeries(foldTitle(meta.title)), h5Token()]);
       })
       .then(function (found) {
-        return seriesEpisodes(found[0] || [], season, episode, found[1] || "", isAnime);
+        var candidates = found[0] || [];
+        var token = found[1] || "";
+        if (!isAnime) return seriesEpisodes(candidates, season, episode, token, false);
+
+        var seasons = tmdbSeasons(meta);
+        var rawEpisode = episodeFromVideoId(rawId);
+        return armSeason(rawId).then(function (entrySeason) {
+          var absolute = rawEpisode > 0
+            ? seasonOffset(seasons, entrySeason) + rawEpisode
+            : seasonOffset(seasons, season) + episode;
+          // MovieBox usually mirrors TMDB's seasons, but long anime sit in a
+          // single season with absolute numbers, so try TMDB's position, then
+          // season one, then whatever the app passed.
+          var attempts = [];
+          var position = tmdbPosition(seasons, absolute);
+          if (position) attempts.push(position);
+          attempts.push({ season: 1, episode: absolute });
+          attempts.push({ season: season, episode: episode });
+          var unique = [];
+          attempts.forEach(function (attempt) {
+            var duplicate = unique.some(function (u) {
+              return u.season === attempt.season && u.episode === attempt.episode;
+            });
+            if (!duplicate) unique.push(attempt);
+          });
+          return trySeriesAttempts(unique, candidates, token);
+        });
       })
       .then(function (found) {
         if (isAnime) {
@@ -7323,7 +7494,7 @@ var CryptoJS = (function () { var module = { exports: {} }; var exports = module
           var sizeLabel = size && size !== "Unknown" ? " (" + size + ")" : "";
           return {
             name: "MovieBox • " + language + " • " + quality + sizeLabel,
-            title: meta.title + " S" + padZero(season) + "E" + padZero(episode) + " [" + quality + "]",
+            title: meta.title + " S" + padZero(shownSeason) + "E" + padZero(shownEpisode) + " [" + quality + "]",
             url: entry.url,
             quality: quality,
             size: size,
@@ -7348,6 +7519,7 @@ var CryptoJS = (function () { var module = { exports: {} }; var exports = module
     // originals, so only the original audio is used for them.
     var isAnime = /^(kitsu|myanimelist|mal|anilist|anidb):/i.test(String(tmdbId == null ? "" : tmdbId).trim());
     var parsedTitleInfo = null;
+    var probedCandidates = [];
 
     if (isTv) {
       if (!/^\d+$/.test(String(season == null ? "" : season).trim())) return Promise.resolve([]);
@@ -7410,8 +7582,8 @@ var CryptoJS = (function () { var module = { exports: {} }; var exports = module
       if (!candidates || candidates.length === 0) return [];
 
       var wantedTitle = parsedTitleInfo.title;
-      // Filter candidates with strict type and strict title matching
-      var validCandidates = [];
+      // Filter candidates with strict type matching first, then by title.
+      var typeValid = [];
       for (var i = 0; i < candidates.length; i++) {
         var cand = candidates[i];
         if (!cand || !cand.subjectId || !cand.title) continue;
@@ -7424,11 +7596,28 @@ var CryptoJS = (function () { var module = { exports: {} }; var exports = module
           if (cand.subjectType === 2 || cand.subjectType === 5 || cand.subjectType === 6 || cand.subjectType === 9) continue;
         }
 
-        if (!isStrictMatch(cand.title, wantedTitle)) continue;
-        // Anime is Japanese audio only, so dubbed releases are not used.
-        if (isAnime && releaseAudio(cand.title) !== "original") continue;
+        typeValid.push(cand);
+      }
 
-        validCandidates.push(cand);
+      var validCandidates = [];
+      for (var s = 0; s < typeValid.length; s++) {
+        var strict = typeValid[s];
+        if (!isStrictMatch(strict.title, wantedTitle)) continue;
+        // Anime is Japanese audio only, so dubbed releases are not used.
+        if (isAnime && releaseAudio(strict.title) !== "original") continue;
+        validCandidates.push(strict);
+      }
+
+      // Anime films are often listed under a shortened title (TMDB's "Demon
+      // Slayer -Kimetsu no Yaiba- The Movie: Mugen Train" is "Demon Slayer the
+      // Movie: Mugen Train"), so fall back to a word match guarded by year.
+      if (validCandidates.length === 0 && isAnime) {
+        for (var l = 0; l < typeValid.length; l++) {
+          var loose = typeValid[l];
+          if (releaseAudio(loose.title) !== "original") continue;
+          if (!isLooseMatch(loose.title, wantedTitle, loose.releaseDate, parsedTitleInfo.year)) continue;
+          validCandidates.push(loose);
+        }
       }
 
       if (validCandidates.length === 0) return [];
@@ -7444,6 +7633,7 @@ var CryptoJS = (function () { var module = { exports: {} }; var exports = module
 
       // Probe all valid matching candidates (up to 6) to gather ALL languages and ALL qualities
       var probeLimit = Math.min(validCandidates.length, 6);
+      probedCandidates = validCandidates.slice(0, probeLimit);
       var allCollectedStreams = [];
       var seenGlobalUrls = {};
       var candIdx = 0;
@@ -7468,29 +7658,23 @@ var CryptoJS = (function () { var module = { exports: {} }; var exports = module
       }
 
       return probeNextCandidate();
-    }).then(function (streams) {
-      // 1080p and 4K only, except anime: MovieBox often tops out at 720p and
-      // playing the best available beats nothing.
-      if (isAnime) {
-        var best = 0;
-        streams.forEach(function (s) {
-          best = Math.max(best, qualityHeight(s.quality));
-        });
-        streams = streams.filter(function (s) {
-          return qualityHeight(s.quality) === best;
-        });
-      } else {
-        streams = streams.filter(function (s) {
-          return s.quality === "4K" || s.quality === "1080p";
-        });
-      }
-      streams.sort(function (a, b) {
-        var qMap = { "4K": 5, "1080p": 4, "720p": 3, "480p": 2, "360p": 1 };
-        var qDiff = (qMap[b.quality] || 0) - (qMap[a.quality] || 0);
-        if (qDiff !== 0) return qDiff;
-        return a.name.localeCompare(b.name);
+    }).then(function (mobileStreams) {
+      var bestMobile = 0;
+      mobileStreams.forEach(function (s) {
+        bestMobile = Math.max(bestMobile, qualityHeight(s.quality));
       });
-      return streams;
+      var hasGoodMobile = isAnime
+        ? bestMobile >= 1080
+        : mobileStreams.some(function (s) { return s.quality === "4K" || s.quality === "1080p"; });
+      if (hasGoodMobile || !probedCandidates.length) return finalizeMovieStreams(mobileStreams, isAnime);
+
+      // The web player has the real film files for titles the mobile API only
+      // shells out (or lists below the wanted quality).
+      return h5Token().then(function (token) {
+        return h5MovieStreams(probedCandidates, parsedTitleInfo.title, isAnime, token);
+      }).then(function (webStreams) {
+        return finalizeMovieStreams(mobileStreams.concat(webStreams), isAnime);
+      });
     }).catch(function (err) {
       console.error("[MovieBox Provider] Extraction failed:", err.message);
       return [];

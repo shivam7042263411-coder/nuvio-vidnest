@@ -51,7 +51,7 @@ test("resolves an anime id to TMDB before scraping MovieBox", async () => {
 
 // Series live behind MovieBox's H5 API; the mobile API returns no episode
 // files. Mock the whole chain: ARM -> TMDB -> search -> H5 play.
-function seriesFetch({ tmdbId, name, year, subjects, heights, seen }) {
+function seriesFetch({ tmdbId, name, year, subjects, heights, seen, only }) {
   const json = (body, headers = {}) =>
     new Response(JSON.stringify(body), {
       status: 200,
@@ -73,10 +73,13 @@ function seriesFetch({ tmdbId, name, year, subjects, heights, seen }) {
     }
     if (target.includes("subject/play")) {
       const subjectId = (/subjectId=(\w+)/.exec(target) || [])[1];
+      const se = Number((/se=(\d+)/.exec(target) || [])[1]);
+      const ep = Number((/ep=(\d+)/.exec(target) || [])[1]);
+      const list = only && (only.se !== se || only.ep !== ep) ? [] : heights;
       return json({
         code: 0,
         data: {
-          streams: heights.map((height) => ({
+          streams: list.map((height) => ({
             format: "MP4",
             url: "https://bcdnxw.hakunaymatata.com/resource/" + subjectId + "-" + height + ".mp4",
             resolutions: String(height),
@@ -116,6 +119,105 @@ test("plays an anime series episode through the H5 API with Japanese audio", asy
     assert.equal(plays.length, 1, "only the original release is played");
     assert.ok(plays[0].includes("subjectId=111"));
     assert.ok(plays[0].includes("se=1") && plays[0].includes("ep=100"));
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test("plays the season the app passed when MovieBox splits merged TMDB seasons", async () => {
+  const original = globalThis.fetch;
+  const seen = [];
+  globalThis.fetch = seriesFetch({
+    tmdbId: 95479,
+    name: "JUJUTSU KAISEN",
+    year: "2020",
+    subjects: [{ subjectId: "777", title: "Jujutsu Kaisen S1-S3", subjectType: 2, hasResource: true }],
+    heights: [1080],
+    seen,
+    only: { se: 2, ep: 1 }
+  });
+
+  try {
+    const { getStreams } = require("../providers/moviebox.js");
+    const streams = await getStreams("kitsu:40748:25", "tv", 2, 1);
+    assert.equal(streams.length, 1);
+    assert.equal(streams[0].language, "Japanese");
+    assert.ok(seen.some((u) => u.includes("subject/play") && u.includes("se=2") && u.includes("ep=1")));
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+// Anime films are listed on the web player even when the mobile API has only
+// an empty shell for them.
+test("falls back to the H5 player for an anime film with no mobile file", async () => {
+  const original = globalThis.fetch;
+  const seen = [];
+  const json = (body, headers = {}) =>
+    new Response(JSON.stringify(body), {
+      status: 200,
+      headers: Object.assign({ "content-type": "application/json" }, headers)
+    });
+  globalThis.fetch = async (url) => {
+    const target = String(url);
+    seen.push(target);
+    if (target.includes("arm.haglund.dev")) return json({ themoviedb: 635302 });
+    if (target.includes("/3/movie/635302")) {
+      return json({ title: "Demon Slayer -Kimetsu no Yaiba- The Movie: Mugen Train", release_date: "2020-10-16" });
+    }
+    if (target.includes("visitor-login")) return json({ code: 0, data: { token: "mobile-token" } });
+    if (target.includes("search/v2")) {
+      return json({
+        code: 0,
+        data: {
+          results: [
+            {
+              subjects: [
+                {
+                  subjectId: "888",
+                  title: "Demon Slayer the Movie: Mugen Train",
+                  subjectType: 1,
+                  hasResource: true,
+                  releaseDate: "2021-04-23"
+                }
+              ]
+            }
+          ]
+        }
+      });
+    }
+    if (target.includes("subject-api/get")) {
+      return json({ code: 0, data: { resourceDetectors: [{ resolutionList: [], downloadUrl: "", resourceLink: "https://ailok.pe/info/x" }] } });
+    }
+    if (target.includes("get-latest-app-pkgs")) {
+      return json({}, { "x-user": JSON.stringify({ token: "h5-token" }) });
+    }
+    if (target.includes("web/post/list/subject")) {
+      return json({ data: { items: [{ subject: { detailPath: "mugen-train" } }] } });
+    }
+    if (target.includes("subject/play")) {
+      return json({
+        code: 0,
+        data: {
+          streams: [
+            { format: "MP4", url: "https://bcdnxw.hakunaymatata.com/resource/jp-1080.mp4", resolutions: "1080", size: "2391937826" },
+            { format: "MP4", url: "https://bcdnxw.hakunaymatata.com/tran-audio/hi-480.mp4", resolutions: "480", size: "464894769" }
+          ]
+        }
+      });
+    }
+    return json({});
+  };
+
+  try {
+    const { getStreams } = require("../providers/moviebox.js");
+    const streams = await getStreams("mal:40456", "movie");
+    assert.equal(streams.length, 1);
+    assert.equal(streams[0].quality, "1080p");
+    assert.equal(streams[0].language, "Japanese");
+    assert.ok(!streams[0].url.includes("tran-audio"));
+    assert.equal(streams[0].headers.Referer, "https://filmboom.top/");
+    assert.ok(seen.some((u) => u.includes("subject/play") && u.includes("se=0") && u.includes("ep=0")));
   } finally {
     globalThis.fetch = original;
   }

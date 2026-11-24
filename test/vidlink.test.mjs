@@ -279,9 +279,19 @@ test("anime falls back to the best quality below 1080p", async () => {
   }
 });
 
-test("does not remap or look up TMDB when the catalogue already uses TMDB seasons", async () => {
+test("maps a per-season anime entry onto its TMDB season", async () => {
   const mock = mockFetch([
-    { match: "arm.haglund.dev", response: () => json({ themoviedb: 220542 }) },
+    { match: "arm.haglund.dev", response: () => json({ themoviedb: 220542, "themoviedb-season": 2 }) },
+    {
+      match: "api.themoviedb.org/3/tv/220542",
+      response: () =>
+        json({
+          seasons: [
+            { season_number: 1, episode_count: 24 },
+            { season_number: 2, episode_count: 24 }
+          ]
+        })
+    },
     enc,
     { match: "/tv/HASH123/2/3", response: () => json(payload({ 1080: quality("https://cdn/ep.mp4") })) }
   ]);
@@ -289,8 +299,58 @@ test("does not remap or look up TMDB when the catalogue already uses TMDB season
   try {
     const streams = await getStreams("kitsu:48649:3", "tv", 2, 3);
     assert.equal(streams.length, 1);
-    assert.ok(!mock.calls.some((call) => call.url.includes("api.themoviedb.org/3/tv/")));
     assert.ok(mock.calls.some((call) => call.url.includes("/tv/HASH123/2/3")));
+  } finally {
+    mock.restore();
+  }
+});
+
+// Some catalogues keep long anime numbered continuously while the app shows
+// fake seasons (Naruto ep 45 as "S2E5"); the video id's number wins.
+test("trusts the episode number in the video id over a fake season", async () => {
+  const mock = mockFetch([
+    { match: "arm.haglund.dev", response: () => json({ themoviedb: 46260 }) },
+    {
+      match: "api.themoviedb.org/3/tv/46260",
+      response: () =>
+        json({
+          seasons: [
+            { season_number: 1, episode_count: 52 },
+            { season_number: 2, episode_count: 52 }
+          ]
+        })
+    },
+    enc,
+    { match: "/tv/HASH123/1/45", response: () => json(payload({ 1080: quality("https://cdn/ep.mp4") })) }
+  ]);
+
+  try {
+    const streams = await getStreams("kitsu:11:45", "tv", 2, 5);
+    assert.equal(streams.length, 1);
+    assert.ok(mock.calls.some((call) => call.url.includes("/tv/HASH123/1/45")));
+  } finally {
+    mock.restore();
+  }
+});
+
+test("tries the position the app passed when the absolute episode is missing", async () => {
+  const mock = mockFetch([
+    { match: "arm.haglund.dev", response: () => json({ themoviedb: 95479 }) },
+    {
+      match: "api.themoviedb.org/3/tv/95479",
+      // TMDB merges both of Jujutsu Kaisen's seasons into one.
+      response: () => json({ seasons: [{ season_number: 1, episode_count: 59 }] })
+    },
+    enc,
+    { match: "/tv/HASH123/1/25", response: () => json(payload({})) },
+    { match: "/tv/HASH123/2/1", response: () => json(payload({ 1080: quality("https://cdn/ep.mp4") })) }
+  ]);
+
+  try {
+    const streams = await getStreams("kitsu:40748:25", "tv", 2, 1);
+    assert.equal(streams.length, 1);
+    assert.ok(mock.calls.some((call) => call.url.includes("/tv/HASH123/1/25")));
+    assert.ok(mock.calls.some((call) => call.url.includes("/tv/HASH123/2/1")));
   } finally {
     mock.restore();
   }

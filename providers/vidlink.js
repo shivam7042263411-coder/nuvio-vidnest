@@ -101,13 +101,21 @@ async function tmdbFind(externalSource, value) {
   return results.length && isPositiveInt(results[0].id) ? String(results[0].id) : "";
 }
 
+// The episode number a catalogue puts in the video id ("kitsu:11:45" = episode
+// 45). It is authoritative: some anime catalogues keep numbering continuous
+// while the app shows the episodes split into fake seasons.
+function episodeFromVideoId(rawId) {
+  var match = /^[a-z-]+:\d+:(\d+)$/i.exec(String(rawId == null ? "" : rawId).trim());
+  return match ? Number(match[1]) : 0;
+}
+
 // shortcut: a single mapping service (ARM) resolves anime ids. If it is down,
 // an anime id resolves to nothing and the title returns no sources, exactly as
 // it did before; add a second source only if that proves flaky.
 async function resolveId(rawId) {
   var raw = String(rawId == null ? "" : rawId).trim();
   var id = raw.replace(/^(tmdb|movie|series)[:/]/i, "");
-  if (/^\d+$/.test(id)) return { id: id, anime: false };
+  if (/^\d+$/.test(id)) return { id: id, anime: false, season: 1 };
 
   var match = /^([a-z-]+):(.+)$/i.exec(id);
   var source = match ? match[1].toLowerCase() : "";
@@ -120,39 +128,66 @@ async function resolveId(rawId) {
         { Accept: "application/json" }
       );
       var tmdb = mapped && mapped.themoviedb != null ? String(mapped.themoviedb).split(",")[0].trim() : "";
-      if (isPositiveInt(tmdb)) return { id: tmdb, anime: true };
+      var season = mapped && mapped["themoviedb-season"] != null ? parseInt(mapped["themoviedb-season"], 10) : 0;
+      if (isPositiveInt(tmdb)) return { id: tmdb, anime: true, season: season > 0 ? season : 1 };
     } catch (e) {}
-    return { id: "", anime: true };
+    return { id: "", anime: true, season: 1 };
   }
-  if (source === "tvdb" && isPositiveInt(value)) return { id: await tmdbFind("tvdb_id", value), anime: false };
+  if (source === "tvdb" && isPositiveInt(value)) return { id: await tmdbFind("tvdb_id", value), anime: false, season: 1 };
 
   var imdb = /(tt\d{5,})/i.exec(id);
-  return { id: imdb ? await tmdbFind("imdb_id", imdb[1]) : "", anime: false };
+  return { id: imdb ? await tmdbFind("imdb_id", imdb[1]) : "", anime: false, season: 1 };
 }
 
-// Long-running anime catalogues number episodes absolutely inside one season
-// ("kitsu:11:100" = Naruto episode 100), but TMDB — and so VidLink — split
-// those into seasons. When an episode is outside its TMDB season, read the
-// number as absolute and map it onto TMDB's season layout. Returns null when
-// the number already fits the requested season.
-async function mapAnimeEpisode(tmdbId, season, episode) {
+// Anime catalogues number episodes within a single entry (Naruto: 1..220 in
+// season 1), and some apps split those into seasons for display while the
+// video id keeps the real number. VidLink — like TMDB — uses real seasons, so
+// this returns every position worth trying, best first: the absolute episode,
+// the position the app passed, then a flat season one.
+async function animePositions(tmdbId, season, episode, rawEpisode, entrySeason) {
   var show = await tmdbJson("/3/tv/" + encodeURIComponent(tmdbId));
   var seasons = ((show && show.seasons) || [])
     .filter(function (s) { return s && s.season_number >= 1 && s.episode_count > 0; })
     .sort(function (a, b) { return a.season_number - b.season_number; });
+  var positions = [];
 
-  var current = null;
-  seasons.forEach(function (s) { if (s.season_number === season) current = s; });
-  if (!current || episode <= current.episode_count) return null;
-
-  var offset = 0;
-  for (var i = 0; i < seasons.length; i++) {
-    if (episode <= offset + seasons[i].episode_count) {
-      return { season: seasons[i].season_number, episode: episode - offset };
+  function add(seasonNumber, episodeNumber) {
+    if (!isPositiveInt(seasonNumber) || !isPositiveInt(episodeNumber)) return;
+    for (var i = 0; i < positions.length; i++) {
+      if (positions[i].season === seasonNumber && positions[i].episode === episodeNumber) return;
     }
-    offset += seasons[i].episode_count;
+    positions.push({ season: seasonNumber, episode: episodeNumber });
   }
-  return null;
+
+  var offsetOf = function (seasonNumber) {
+    var offset = 0;
+    for (var i = 0; i < seasons.length; i++) {
+      if (seasons[i].season_number >= seasonNumber) break;
+      offset += seasons[i].episode_count;
+    }
+    return offset;
+  };
+
+  function positionOf(absolute) {
+    var offset = 0;
+    for (var i = 0; i < seasons.length; i++) {
+      if (absolute <= offset + seasons[i].episode_count) {
+        return { season: seasons[i].season_number, episode: absolute - offset };
+      }
+      offset += seasons[i].episode_count;
+    }
+    return null;
+  }
+
+  if (rawEpisode > 0 && seasons.length) {
+    var mapped = positionOf(offsetOf(entrySeason) + rawEpisode);
+    if (mapped) add(mapped.season, mapped.episode);
+    add(season, episode);
+    add(1, rawEpisode);
+  } else {
+    add(season, episode);
+  }
+  return positions;
 }
 
 function qualityLabel(height) {
@@ -275,15 +310,11 @@ async function getStreams(tmdbId, mediaType, season, episode) {
     var kind = mediaType === "tv" ? "tv" : "movie";
     if (kind === "tv" && (!isPositiveInt(season) || !isPositiveInt(episode))) return [];
 
-    // Anime catalogues number long shows absolutely in season 1; map that onto
-    // the TMDB season VidLink actually uses.
-    if (resolved.anime && kind === "tv" && season === 1) {
-      var mapped = await mapAnimeEpisode(id, season, episode);
-      if (mapped) {
-        log("absolute episode " + episode + " -> S" + mapped.season + "E" + mapped.episode);
-        season = mapped.season;
-        episode = mapped.episode;
-      }
+    // Anime ids carry the episode number; season splits shown by the app are
+    // cosmetic. Try TMDB's real positions so the right episode is fetched.
+    var positions = [{ season: season, episode: episode }];
+    if (resolved.anime && kind === "tv") {
+      positions = await animePositions(id, season, episode, episodeFromVideoId(tmdbId), resolved.season);
     }
 
     var encoded = await requestJson(
@@ -295,20 +326,25 @@ async function getStreams(tmdbId, mediaType, season, episode) {
       return [];
     }
 
-    var url = kind === "tv"
-      ? VIDLINK_API + "/tv/" + encodeURIComponent(encoded.result) + "/" + season + "/" + episode
-      : VIDLINK_API + "/movie/" + encodeURIComponent(encoded.result);
+    for (var p = 0; p < positions.length; p++) {
+      var position = positions[p];
+      var url = kind === "tv"
+        ? VIDLINK_API + "/tv/" + encodeURIComponent(encoded.result) + "/" + position.season + "/" + position.episode
+        : VIDLINK_API + "/movie/" + encodeURIComponent(encoded.result);
 
-    var payload = await requestJson(url, API_HEADERS);
-    var stream = payload && payload.stream;
-    if (!stream) {
-      log(kind + " " + id + " -> no stream");
-      return [];
+      var payload = await requestJson(url, API_HEADERS);
+      var stream = payload && payload.stream;
+      if (!stream) continue;
+
+      var streams = selectStreams(stream, subtitlesOf(stream), resolved.anime);
+      if (streams.length) {
+        log(kind + " " + id + " S" + position.season + "E" + position.episode + " -> " + streams.length + " source(s)");
+        return streams;
+      }
     }
 
-    var streams = selectStreams(stream, subtitlesOf(stream), resolved.anime);
-    log(kind + " " + id + " -> " + streams.length + " source(s)");
-    return streams;
+    log(kind + " " + id + " -> no stream");
+    return [];
   } catch (e) {
     log("getStreams failed: " + (e && e.message));
     return [];
