@@ -7610,10 +7610,12 @@ var CryptoJS = (function () { var module = { exports: {} }; var exports = module
         validCandidates.push(strict);
       }
 
-      // Anime films are often listed under a shortened title (TMDB's "Demon
-      // Slayer -Kimetsu no Yaiba- The Movie: Mugen Train" is "Demon Slayer the
-      // Movie: Mugen Train"), so fall back to a word match guarded by year.
-      if (validCandidates.length === 0 && isAnime) {
+      // Films are often listed under a reworded title (TMDB's "Demon Slayer:
+      // Kimetsu no Yaiba Infinity Castle" is MovieBox's "Demon Slayer: Kimetsu
+      // no Yaiba- The Movie - Infinity Castle"), so fall back to a word match
+      // guarded by year. Applies to films reached by a bare TMDB id too, not
+      // only anime-prefixed ids.
+      if (validCandidates.length === 0 && (!isTv || isAnime)) {
         for (var l = 0; l < typeValid.length; l++) {
           var loose = typeValid[l];
           if (releaseAudio(loose.title) !== "original") continue;

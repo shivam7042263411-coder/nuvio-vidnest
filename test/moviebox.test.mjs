@@ -249,6 +249,74 @@ test("falls back to the H5 player for an anime film with no mobile file", async 
   }
 });
 
+// Reached by a bare TMDB id, a film is still listed under a reworded title on
+// MovieBox; the year-guarded word fallback must run for it too.
+test("finds a film by a bare TMDB id when MovieBox rewords its title", async () => {
+  const original = globalThis.fetch;
+  const json = (body, headers = {}) =>
+    new Response(JSON.stringify(body), {
+      status: 200,
+      headers: Object.assign({ "content-type": "application/json" }, headers)
+    });
+  globalThis.fetch = async (url) => {
+    const target = String(url);
+    if (target.includes("/3/movie/1311031")) {
+      return json({ title: "Demon Slayer: Kimetsu no Yaiba Infinity Castle", release_date: "2025-09-12" });
+    }
+    if (target.includes("visitor-login")) return json({ code: 0, data: { token: "mobile-token" } });
+    if (target.includes("search/v2")) {
+      return json({
+        code: 0,
+        data: {
+          results: [
+            {
+              subjects: [
+                {
+                  subjectId: "999",
+                  title: "Demon Slayer: Kimetsu no Yaiba- The Movie - Infinity Castle",
+                  subjectType: 1,
+                  hasResource: true,
+                  releaseDate: "2025-09-12"
+                }
+              ]
+            }
+          ]
+        }
+      });
+    }
+    if (target.includes("subject-api/get")) {
+      return json({ code: 0, data: { resourceDetectors: [] } });
+    }
+    if (target.includes("get-latest-app-pkgs")) {
+      return json({}, { "x-user": JSON.stringify({ token: "h5-token" }) });
+    }
+    if (target.includes("web/post/list/subject")) {
+      return json({ data: { items: [{ subject: { detailPath: "infinity-castle" } }] } });
+    }
+    if (target.includes("subject/play")) {
+      return json({
+        code: 0,
+        data: {
+          streams: [
+            { format: "MP4", url: "https://bcdn.hakunaymatata.com/resource/ic-1080.mp4", resolutions: "1080", size: "1340000000" }
+          ]
+        }
+      });
+    }
+    return json({});
+  };
+
+  try {
+    const { getStreams } = require("../providers/moviebox.js");
+    const streams = await getStreams("1311031", "movie");
+    assert.equal(streams.length, 1);
+    assert.equal(streams[0].quality, "1080p");
+    assert.equal(streams[0].headers.Referer, "https://filmboom.top/");
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
 test("returns nothing for anime when only a dubbed release exists", async () => {
   const original = globalThis.fetch;
   globalThis.fetch = seriesFetch({
