@@ -1,7 +1,7 @@
 {
   "name": "Direct MP4",
-  "version": "3.8.3",
-  "description": "Direct MP4 streams from VidLink and MovieBox. 1080p and 4K only. No HLS.",
+  "version": "3.8.4",
+  "description": "Direct MP4 streams from VidLink and MovieBox. Movies and shows in 1080p/4K; anime in the original Japanese audio. No HLS.",
   "scrapers": [
     {
       "id": "vidlink",
@@ -18,13 +18,13 @@
     {
       "id": "moviebox",
       "name": "MovieBox",
-      "description": "MovieBox — direct MP4 movies in 1080p/4K with separate English and Hindi releases.",
-      "version": "3.8.1",
-      "supportedTypes": ["movie"],
+      "description": "MovieBox — direct MP4 movies and shows in 1080p/4K with separate English and Hindi releases; anime in the original Japanese audio.",
+      "version": "3.8.4",
+      "supportedTypes": ["movie", "tv"],
       "filename": "providers/moviebox.js",
       "enabled": true,
       "formats": ["mp4"],
-      "contentLanguage": ["hi", "en"]
+      "contentLanguage": ["hi", "en", "ja"]
     }
   ]
 }

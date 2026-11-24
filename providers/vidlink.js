@@ -10,6 +10,7 @@
  * Source policy: MP4 only, no HLS, and 1080p or 4K only. A title whose best
  * quality is below 1080p returns nothing, except anime, where VidLink often
  * only carries 480p/720p and the best available quality is used instead.
+ * Anime files carry their original Japanese audio; no dubbed track is offered.
  *
  * Headers matter: VidLink's media CDN (bcdn.hakunaymatata.com) answers 428
  * Forbidden to a browser User-Agent and 206 to "okhttp/4.12.0", so every

@@ -6662,6 +6662,10 @@ var CryptoJS = (function () { var module = { exports: {} }; var exports = module
  * MovieBox Provider for Nuvio & Euthopiar
  * Standalone Client-Side Provider - Zero Server / Localhost Required
  * 100% Pure ES5 / QuickJS Compatible
+ *
+ * Movies come from the mobile API; series come from the H5 API. Anime (ids from
+ * kitsu:/mal:/anilist:/anidb:) is restricted to the original Japanese audio and
+ * may fall back below 1080p, because MovieBox often tops out at 720p for it.
  */
 
 (function () {
@@ -6726,8 +6730,17 @@ var CryptoJS = (function () { var module = { exports: {} }; var exports = module
     return String(s || "").toLowerCase().replace(/[^a-z0-9]/g, " ").trim();
   }
 
+  // Fold accents so "Shippūden" still matches "Shippuden" in titles and searches.
+  function foldTitle(value) {
+    var s = String(value || "");
+    try {
+      s = s.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    } catch (e) {}
+    return s;
+  }
+
   function getBaseTitle(str) {
-    var s = String(str || "").toLowerCase();
+    var s = foldTitle(str).toLowerCase();
     // Remove brackets content like [Hindi], (Dubbed), [S1-S4]
     s = s.replace(/\[[^\]]*\]/g, " ").replace(/\([^\)]*\)/g, " ");
     // Remove season markers like S1-S4, S01, Season 1
@@ -6749,7 +6762,7 @@ var CryptoJS = (function () { var module = { exports: {} }; var exports = module
     return baseCand === baseWanted;
   }
 
-  function getLanguageTag(candTitle, candCorner, resTitle, url) {
+  function getLanguageTag(candTitle, candCorner, resTitle, url, isAnime) {
     var lower = (String(candTitle || "") + " " + String(candCorner || "") + " " + String(resTitle || "") + " " + String(url || "")).toLowerCase();
     if (lower.indexOf("hindi") !== -1 || lower.indexOf("tran-audio") !== -1) return "[Hindi]";
     if (lower.indexOf("tamil") !== -1) return "[Tamil]";
@@ -6760,7 +6773,7 @@ var CryptoJS = (function () { var module = { exports: {} }; var exports = module
     if (lower.indexOf("marathi") !== -1) return "[Marathi]";
     if (lower.indexOf("punjabi") !== -1) return "[Punjabi]";
     if (lower.indexOf("dual") !== -1 || lower.indexOf("multi") !== -1) return "[Dual/Multi]";
-    return "[English]";
+    return isAnime ? "[Japanese]" : "[English]";
   }
 
   function buildQuery(params) {
@@ -6989,7 +7002,7 @@ var CryptoJS = (function () { var module = { exports: {} }; var exports = module
     });
   }
 
-  function extractStreamsFromCandidate(candidate, info, isTv, season, episode) {
+  function extractStreamsFromCandidate(candidate, info, isTv, season, episode, isAnime) {
     return mbRequest("GET", "/wefeed-mobile-bff/subject-api/get", { subjectId: candidate.subjectId }).then(function (detRes) {
       var data = (detRes && detRes.data) ? detRes.data : {};
       var detectors = data.resourceDetectors || [];
@@ -7062,7 +7075,7 @@ var CryptoJS = (function () { var module = { exports: {} }; var exports = module
             }
             if (cookie) headers["Cookie"] = cookie;
 
-            var langTag = getLanguageTag(candidate.title, candidate.corner, resItem.title, url);
+            var langTag = getLanguageTag(candidate.title, candidate.corner, resItem.title, url, isAnime);
             var qNorm = quality;
             var badge = (qNorm === "4K") ? "4K UHD" : (qNorm === "1080p") ? "1080p FHD" : (qNorm === "720p") ? "720p HD" : (qNorm === "480p") ? "480p SD" : (qNorm === "360p") ? "360p SD" : qNorm;
             var sizeStr = formatBytes(resItem.size || 0);
@@ -7104,9 +7117,9 @@ var CryptoJS = (function () { var module = { exports: {} }; var exports = module
               dHeaders["Referer"] = "https://sportslive.wine";
               dHeaders["User-Agent"] = "ExoPlayerLib/2.19.1";
             }
-            if (cookie) headers["Cookie"] = cookie;
+            if (cookie) dHeaders["Cookie"] = cookie;
 
-            var dLangTag = getLanguageTag(candidate.title, candidate.corner, "", directUrl);
+            var dLangTag = getLanguageTag(candidate.title, candidate.corner, "", directUrl, isAnime);
             var dBadge = (dQuality === "4K") ? "4K UHD" : (dQuality === "1080p") ? "1080p FHD" : (dQuality === "720p") ? "720p HD" : (dQuality === "480p") ? "480p SD" : (dQuality === "360p") ? "360p SD" : dQuality;
             var dSizeStr = formatBytes(det.totalSize || 0);
             var dSizeLabel = dSizeStr && dSizeStr !== "Unknown" ? " (" + dSizeStr + ")" : "";
@@ -7133,10 +7146,214 @@ var CryptoJS = (function () { var module = { exports: {} }; var exports = module
     });
   }
 
+  // Series: the mobile API's resource detectors are empty for episodes, so the
+  // files come from MovieBox's H5 API, the calls its web player makes. Long
+  // anime (Naruto: 220 episodes) are stored as season 1 with absolute episode
+  // numbers, which is exactly how anime catalogues number them.
+  var H5_API = "https://h5-api.aoneroom.com";
+  var H5_WEB = "https://h5.aoneroom.com";
+  var H5_PLAYER = "https://fmoviesunblocked.net";
+  var H5_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+  var H5_JSON_HEADERS = {
+    "X-Client-Info": '{"timezone":"Africa/Nairobi"}',
+    "Accept-Language": "en-US,en;q=0.5",
+    "Accept": "application/json",
+    "Referer": H5_API,
+    "Host": "h5-api.aoneroom.com",
+    "User-Agent": H5_UA
+  };
+  // The episode CDN answers 429 to every user agent unless the player origin is
+  // sent.
+  var H5_MEDIA_HEADERS = {
+    "User-Agent": "okhttp/4.9.0",
+    "Referer": "https://filmboom.top/",
+    "Origin": "https://filmboom.top"
+  };
+
+  function h5Json(url, headers) {
+    return fetch(url, { headers: headers }).then(function (r) {
+      return r.ok ? r.json() : null;
+    });
+  }
+
+  function h5Token() {
+    return fetch(H5_API + "/wefeed-h5api-bff/app/get-latest-app-pkgs?app_name=moviebox", {
+      headers: { "User-Agent": H5_UA }
+    }).then(function (r) {
+      var user = {};
+      try {
+        user = JSON.parse(r.headers.get("x-user") || "{}");
+      } catch (e) {}
+      return user.token || "";
+    }).catch(function () {
+      return "";
+    });
+  }
+
+  // MovieBox files each dub as its own release ("Title [Hindi]"); an un-tagged
+  // release is the original audio — Japanese for anime.
+  function releaseAudio(title) {
+    var tag = (String(title || "").match(/\[([^\]]+)\]/) || [])[1] || "";
+    if (!tag || /japan|jpn|original|sub/i.test(tag)) return "original";
+    if (/hindi/i.test(tag)) return "hindi";
+    if (/english|eng/i.test(tag)) return "english";
+    return "";
+  }
+
+  function h5Play(subjectId, season, episode, token) {
+    return h5Json(H5_WEB + "/wefeed-h5-bff/web/post/list/subject?id=" + encodeURIComponent(subjectId), {
+      "User-Agent": H5_UA
+    }).then(function (detail) {
+      var items = (detail && detail.data && detail.data.items) || [];
+      var detailPath = (items.length && items[0].subject && items[0].subject.detailPath) || "";
+      var query = "subjectId=" + encodeURIComponent(subjectId) +
+        "&se=" + encodeURIComponent(season) + "&ep=" + encodeURIComponent(episode) +
+        (detailPath ? "&detailPath=" + encodeURIComponent(detailPath) : "");
+      var headers = Object.assign({}, H5_JSON_HEADERS, {
+        Authorization: "Bearer " + token,
+        Referer: H5_PLAYER + "/spa/videoPlayPage/movies/" + detailPath + "?id=" + subjectId + "&type=/movie/detail",
+        Origin: H5_PLAYER
+      });
+      return h5Json(H5_API + "/wefeed-h5api-bff/subject/play?" + query, headers);
+    }).then(function (body) {
+      return (body && body.data && body.data.streams) || [];
+    }).catch(function () {
+      return [];
+    });
+  }
+
+  function searchSeries(title) {
+    return mbRequest("POST", "/wefeed-mobile-bff/subject-api/search/v2", {}, {
+      keyword: title,
+      page: 1,
+      pageSize: 15
+    }).then(function (res) {
+      var groups = (res && res.data && res.data.results) || [];
+      var out = [];
+      var seen = {};
+      for (var g = 0; g < groups.length; g++) {
+        var subjects = groups[g].subjects || [];
+        for (var s = 0; s < subjects.length; s++) {
+          var item = subjects[s];
+          if (!item || !item.subjectId || !item.title || !item.hasResource) continue;
+          if (item.subjectType !== 2 || seen[item.subjectId]) continue;
+          if (!isStrictMatch(item.title, title)) continue;
+          seen[item.subjectId] = true;
+          out.push(item);
+        }
+      }
+      return out;
+    }).catch(function () {
+      return [];
+    });
+  }
+
+  function seriesEpisodes(candidates, season, episode, token, isAnime) {
+    // Anime is Japanese audio only; other shows keep the original and the Hindi
+    // dub.
+    var kept = [];
+    for (var i = 0; i < candidates.length; i++) {
+      var audio = releaseAudio(candidates[i].title);
+      if (isAnime ? audio === "original" : (audio === "original" || audio === "hindi")) {
+        kept.push({ item: candidates[i], audio: audio });
+      }
+    }
+
+    var collected = [];
+    var seen = {};
+    function next(index) {
+      if (index >= kept.length) return Promise.resolve(collected);
+      var entry = kept[index];
+      return h5Play(entry.item.subjectId, season, episode, token).then(function (list) {
+        for (var s = 0; s < list.length; s++) {
+          var stream = list[s];
+          var url = String((stream && stream.url) || "");
+          if (!url || seen[url] || stream.vipLocked || !isValidStreamUrl(url)) continue;
+          if (String(stream.format || "").toUpperCase() !== "MP4") continue;
+          var height = parseInt(stream.resolutions || stream.resolution, 10) || 0;
+          if (!height) continue;
+          seen[url] = true;
+          collected.push({ url: url, height: height, size: Number(stream.size) || 0, language: entry.audio });
+        }
+        return next(index + 1);
+      });
+    }
+    return next(0);
+  }
+
+  function qualityHeight(quality) {
+    return quality === "4K" ? 2160 : (parseInt(quality, 10) || 0);
+  }
+
+  function getSeriesStreams(rawId, season, episode, isAnime) {
+    var meta = null;
+    return resolveMbTmdbId(rawId)
+      .then(function (id) {
+        return Promise.all([resolveTitle(id || rawId, "tv"), ensureSession()]);
+      })
+      .then(function (resolved) {
+        meta = resolved[0];
+        if (!meta || !meta.title) return [];
+        return Promise.all([searchSeries(foldTitle(meta.title)), h5Token()]);
+      })
+      .then(function (found) {
+        return seriesEpisodes(found[0] || [], season, episode, found[1] || "", isAnime);
+      })
+      .then(function (found) {
+        if (isAnime) {
+          // Anime on MovieBox often tops out at 720p; playing the best available
+          // beats returning nothing.
+          var best = 0;
+          for (var i = 0; i < found.length; i++) best = Math.max(best, found[i].height);
+          found = found.filter(function (entry) {
+            return entry.height === best;
+          });
+        } else {
+          found = found.filter(function (entry) {
+            return entry.height >= 1080;
+          });
+        }
+        found.sort(function (a, b) {
+          return b.height - a.height;
+        });
+        return found.map(function (entry) {
+          var quality = entry.height >= 2160 ? "4K" : entry.height + "p";
+          var language = entry.language === "hindi" ? "Hindi" : (isAnime ? "Japanese" : "Original");
+          var size = formatBytes(entry.size);
+          var sizeLabel = size && size !== "Unknown" ? " (" + size + ")" : "";
+          return {
+            name: "MovieBox • " + language + " • " + quality + sizeLabel,
+            title: meta.title + " S" + padZero(season) + "E" + padZero(episode) + " [" + quality + "]",
+            url: entry.url,
+            quality: quality,
+            size: size,
+            language: language,
+            type: "mp4",
+            provider: "moviebox",
+            headers: H5_MEDIA_HEADERS,
+            behaviorHints: { notWebReady: false }
+          };
+        });
+      })
+      .catch(function (err) {
+        console.error("[MovieBox Provider] Series extraction failed:", err.message);
+        return [];
+      });
+  }
+
   function getStreams(tmdbId, mediaType, season, episode) {
     mediaType = mediaType || "movie";
     var isTv = mediaType === "tv" || mediaType === "series";
+    // Anime catalogues pass kitsu:/mal:/anilist: ids; those are the Japanese
+    // originals, so only the original audio is used for them.
+    var isAnime = /^(kitsu|myanimelist|mal|anilist|anidb):/i.test(String(tmdbId == null ? "" : tmdbId).trim());
     var parsedTitleInfo = null;
+
+    if (isTv) {
+      if (!/^\d+$/.test(String(season == null ? "" : season).trim())) return Promise.resolve([]);
+      if (!/^\d+$/.test(String(episode == null ? "" : episode).trim())) return Promise.resolve([]);
+      return getSeriesStreams(tmdbId, Number(season), Number(episode), isAnime);
+    }
 
     return resolveMbTmdbId(tmdbId).then(function (resolvedId) {
       tmdbId = resolvedId || tmdbId;
@@ -7208,6 +7425,8 @@ var CryptoJS = (function () { var module = { exports: {} }; var exports = module
         }
 
         if (!isStrictMatch(cand.title, wantedTitle)) continue;
+        // Anime is Japanese audio only, so dubbed releases are not used.
+        if (isAnime && releaseAudio(cand.title) !== "original") continue;
 
         validCandidates.push(cand);
       }
@@ -7234,7 +7453,7 @@ var CryptoJS = (function () { var module = { exports: {} }; var exports = module
           return Promise.resolve(allCollectedStreams);
         }
         var candidate = validCandidates[candIdx++];
-        return extractStreamsFromCandidate(candidate, parsedTitleInfo, isTv, season, episode).then(function (candStreams) {
+        return extractStreamsFromCandidate(candidate, parsedTitleInfo, isTv, season, episode, isAnime).then(function (candStreams) {
           if (candStreams && candStreams.length > 0) {
             for (var s = 0; s < candStreams.length; s++) {
               var st = candStreams[s];
@@ -7250,10 +7469,21 @@ var CryptoJS = (function () { var module = { exports: {} }; var exports = module
 
       return probeNextCandidate();
     }).then(function (streams) {
-      // Local change: 1080p and 4K only. Upstream returns 360p–4K.
-      streams = streams.filter(function (s) {
-        return s.quality === "4K" || s.quality === "1080p";
-      });
+      // 1080p and 4K only, except anime: MovieBox often tops out at 720p and
+      // playing the best available beats nothing.
+      if (isAnime) {
+        var best = 0;
+        streams.forEach(function (s) {
+          best = Math.max(best, qualityHeight(s.quality));
+        });
+        streams = streams.filter(function (s) {
+          return qualityHeight(s.quality) === best;
+        });
+      } else {
+        streams = streams.filter(function (s) {
+          return s.quality === "4K" || s.quality === "1080p";
+        });
+      }
       streams.sort(function (a, b) {
         var qMap = { "4K": 5, "1080p": 4, "720p": 3, "480p": 2, "360p": 1 };
         var qDiff = (qMap[b.quality] || 0) - (qMap[a.quality] || 0);
