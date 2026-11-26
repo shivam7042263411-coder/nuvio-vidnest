@@ -473,3 +473,97 @@ test("keeps a movie release that only carries a direct download URL", async () =
     globalThis.fetch = original;
   }
 });
+
+// Nuvio tags anime with its own "anime" media type (it is never normalized to
+// "tv"), so the provider must run the series path for it.
+test("plays an anime episode when Nuvio tags the content anime", async () => {
+  const original = globalThis.fetch;
+  const seen = [];
+  globalThis.fetch = seriesFetch({
+    tmdbId: 46260,
+    name: "Naruto",
+    year: "2002",
+    subjects: [{ subjectId: "111", title: "Naruto", subjectType: 2, hasResource: true }],
+    heights: [1080],
+    seen
+  });
+
+  try {
+    const { getStreams } = require("../providers/moviebox.js");
+    const streams = await getStreams("kitsu:11:100", "anime", 1, 100);
+    assert.equal(streams.length, 1);
+    assert.equal(streams[0].language, "Japanese");
+    assert.ok(seen.some((u) => u.includes("subject/play") && u.includes("subjectId=111")));
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+// An anime film carries no episode number, so the "anime" media type must fall
+// back to the movie path instead of hunting for an episode.
+test("an anime film tagged anime uses the movie path", async () => {
+  const original = globalThis.fetch;
+  const seen = [];
+  const json = (body) =>
+    new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    });
+  globalThis.fetch = async (url) => {
+    const target = String(url);
+    seen.push(target);
+    if (target.includes("arm.haglund.dev")) return json({ themoviedb: 635302 });
+    if (target.includes("/3/movie/635302")) {
+      return json({ title: "Demon Slayer the Movie: Mugen Train", release_date: "2020-10-16" });
+    }
+    if (target.includes("visitor-login")) return json({ code: 0, data: { token: "mobile-token" } });
+    if (target.includes("search/v2")) {
+      return json({
+        code: 0,
+        data: {
+          results: [
+            {
+              subjects: [
+                {
+                  subjectId: "888",
+                  title: "Demon Slayer the Movie: Mugen Train",
+                  subjectType: 1,
+                  hasResource: true,
+                  releaseDate: "2021-04-23"
+                }
+              ]
+            }
+          ]
+        }
+      });
+    }
+    if (target.includes("subject-api/get")) {
+      return json({
+        code: 0,
+        data: {
+          resourceDetectors: [
+            {
+              resolutionList: [
+                { resolution: 1080, resourceLink: "https://bcdn.hakunaymatata.com/resource/jp-1080.mp4", size: "2000000000" }
+              ],
+              signCookie: ""
+            }
+          ]
+        }
+      });
+    }
+    return json({});
+  };
+
+  try {
+    const { getStreams } = require("../providers/moviebox.js");
+    const streams = await getStreams("mal:40456", "anime");
+    assert.equal(streams.length, 1);
+    assert.equal(streams[0].quality, "1080p");
+    assert.ok(streams[0].name.includes("Japanese"), "an anime film keeps the Japanese audio");
+    assert.ok(seen.some((u) => u.includes("/3/movie/635302")), "the film must resolve as a movie");
+    assert.ok(!seen.some((u) => u.includes("subject/play")), "the series path must not run");
+  } finally {
+    globalThis.fetch = original;
+  }
+});

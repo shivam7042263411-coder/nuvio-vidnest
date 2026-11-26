@@ -22,7 +22,8 @@ if (results.length === 0) {
   process.exit(2);
 }
 
-console.log(`${results.length} source(s) for ${mediaType} ${tmdbId}${mediaType === "tv" ? ` S${season}E${episode}` : ""} (${provider}):`);
+const episodic = (mediaType === "tv" || mediaType === "anime") && season != null && episode != null;
+console.log(`${results.length} source(s) for ${mediaType} ${tmdbId}${episodic ? ` S${season}E${episode}` : ""} (${provider}):`);
 for (const result of results) {
   console.log(`- [${result.type || "mp4"}] ${result.quality} ${result.language || ""} ${result.size || ""} | ${result.name}`);
   console.log(`  ${result.url}`);

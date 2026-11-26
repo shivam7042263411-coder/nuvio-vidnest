@@ -307,8 +307,13 @@ async function getStreams(tmdbId, mediaType, season, episode) {
     }
     var id = resolved.id;
 
-    var kind = mediaType === "tv" ? "tv" : "movie";
-    if (kind === "tv" && (!isPositiveInt(season) || !isPositiveInt(episode))) return [];
+    // Nuvio tags anime with the "anime" media type. It is a series when an
+    // episode is known (from the app or the video id), and a film otherwise.
+    var hasEpisode = isPositiveInt(season) && isPositiveInt(episode);
+    var isSeries = mediaType === "tv" || mediaType === "series" ||
+      (mediaType === "anime" && (hasEpisode || episodeFromVideoId(tmdbId) > 0));
+    if (isSeries && !hasEpisode && episodeFromVideoId(tmdbId) <= 0) return [];
+    var kind = isSeries ? "tv" : "movie";
 
     // Anime ids carry the episode number; season splits shown by the app are
     // cosmetic. Try TMDB's real positions so the right episode is fetched.

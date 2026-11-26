@@ -421,6 +421,42 @@ test("works in the Nuvio sandbox, which has no setTimeout", async () => {
   }
 });
 
+// Nuvio tags anime with its own "anime" media type (never normalized to "tv");
+// an anime episode must still take the TV path.
+test("an anime episode tagged anime uses the TV path", async () => {
+  const mock = mockFetch([
+    { match: "arm.haglund.dev", response: () => json({ themoviedb: 220542, "themoviedb-season": 1 }) },
+    enc,
+    { match: "/tv/HASH123/1/1", response: () => json(payload({ 1080: quality("https://cdn/ep.mp4") })) }
+  ]);
+
+  try {
+    const streams = await getStreams("kitsu:47083:1", "anime", 1, 1);
+    assert.equal(streams.length, 1);
+    assert.ok(mock.calls.some((call) => call.url.includes("/tv/HASH123/1/1")));
+  } finally {
+    mock.restore();
+  }
+});
+
+// An anime film carries no episode, so the "anime" media type must use the
+// movie endpoint instead of looking for a season and episode.
+test("an anime film tagged anime uses the movie path", async () => {
+  const mock = mockFetch([
+    enc,
+    { match: "/movie/HASH123", response: () => json(payload({ 1080: quality("https://cdn/1080.mp4") })) }
+  ]);
+
+  try {
+    const streams = await getStreams(550, "anime");
+    assert.equal(streams.length, 1);
+    assert.ok(mock.calls.some((call) => call.url.includes("/movie/HASH123")));
+    assert.ok(!mock.calls.some((call) => call.url.includes("/tv/HASH123")));
+  } finally {
+    mock.restore();
+  }
+});
+
 test("drops duplicate subtitles and unknown language names", async () => {
   const mock = mockFetch([
     enc,

@@ -7528,16 +7528,24 @@ var CryptoJS = (function () { var module = { exports: {} }; var exports = module
 
   function getStreams(tmdbId, mediaType, season, episode) {
     mediaType = mediaType || "movie";
-    var isTv = mediaType === "tv" || mediaType === "series";
+    var idText = String(tmdbId == null ? "" : tmdbId).trim();
     // Anime catalogues pass kitsu:/mal:/anilist: ids; those are the Japanese
-    // originals, so only the original audio is used for them.
-    var isAnime = /^(kitsu|myanimelist|mal|anilist|anidb):/i.test(String(tmdbId == null ? "" : tmdbId).trim());
+    // originals, so only the original audio is used for them. Nuvio also marks
+    // anime with its own media type.
+    var isAnime = mediaType === "anime" || /^(kitsu|myanimelist|mal|anilist|anidb):/i.test(idText);
+    var hasSeason = /^\d+$/.test(String(season == null ? "" : season).trim());
+    var hasEpisodeNumber = /^\d+$/.test(String(episode == null ? "" : episode).trim());
+    // Nuvio tags anime with the "anime" media type. It is a series when the app
+    // (or the video id) carries an episode number, and a film otherwise.
+    var hasEpisode = (hasSeason && hasEpisodeNumber) || episodeFromVideoId(idText) > 0;
+    var isTv = mediaType === "tv" || mediaType === "series" || (mediaType === "anime" && hasEpisode);
     var parsedTitleInfo = null;
     var probedCandidates = [];
 
     if (isTv) {
-      if (!/^\d+$/.test(String(season == null ? "" : season).trim())) return Promise.resolve([]);
-      if (!/^\d+$/.test(String(episode == null ? "" : episode).trim())) return Promise.resolve([]);
+      // Anime episode numbering lives in the video id, so a missing or odd
+      // season/episode must not discard an anime request.
+      if (!isAnime && (!hasSeason || !hasEpisodeNumber)) return Promise.resolve([]);
       return getSeriesStreams(tmdbId, Number(season), Number(episode), isAnime);
     }
 
